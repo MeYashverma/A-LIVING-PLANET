@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { clamp, clamp01, lerp, TAU } from '../core/math';
 import type { Creatures } from '../life/organism';
 import { SPECIES, type Morphology } from '../life/species';
+import { SkinnedAnimals, RIGGED_SPECIES } from './skinnedAnimals';
 import { RENDER } from '../core/config';
 import type { World } from '../world/world';
 
@@ -788,9 +789,14 @@ export class CreatureRenderer {
   private farCap: number;
   private scratch: THREE.Vector3[] = [];
   private lastPhaseRefresh = 0;
+  private skinned: SkinnedAnimals;
+  private lastNow = 0;
+  private skinnedSkip = new Set<number>();
 
   constructor(private world: World, quality: 'low' | 'medium' | 'high' | 'ultra') {
     const detailScale = quality === 'low' ? 0.35 : quality === 'medium' ? 0.6 : 1;
+    this.skinned = new SkinnedAnimals(this.group, quality === 'low' ? 4 : 12);
+    this.skinned.load();
     this.nearCap = Math.max(24, Math.round(70 * detailScale));
     this.farCap = Math.max(120, Math.round(320 * detailScale));
     for (let i = 0; i < SPECIES.length; i++) {
@@ -816,8 +822,38 @@ export class CreatureRenderer {
     }
     for (const m of this.meshes) m.begin();
 
+    // Rigged species: the nearest few are drawn as skinned models and left out
+    // of the instanced pass. Everything else takes the instanced path below.
+    const dt = this.lastNow ? Math.min(0.1, (now - this.lastNow) / 1000) : 0;
+    this.lastNow = now;
+    this.skinned.beginFrame();
+    const alpha = world.frameAlpha;
+    for (const key of Object.keys(RIGGED_SPECIES)) {
+      if (!this.skinned.isReady(key)) continue;
+      const spIdx = SPECIES.findIndex((sp) => sp.key === key);
+      if (spIdx < 0) continue;
+      const dist = (i: number) => Math.hypot(c.x[i] - cameraPos.x, c.y[i] - cameraPos.z);
+      const picks: number[] = [];
+      for (let i = 0; i < c.capacity; i++) {
+        if (!c.alive[i] || c.speciesIdx[i] !== spIdx) continue;
+        if (dist(i) < RENDER.creatureAnimDistance) picks.push(i);
+      }
+      picks.sort((a, b) => dist(a) - dist(b));
+      this.skinned.place(
+        key,
+        picks.slice(0, 12),
+        c,
+        SPECIES[spIdx].morphology.bodyLength,
+        (i) => lerpAngle(c.prevHeading[i], c.heading[i], alpha),
+        (i) => new THREE.Vector3(lerp(c.prevX[i], c.x[i], alpha), c.z[i], lerp(c.prevY[i], c.y[i], alpha)),
+      );
+      for (const i of this.skinned.consumed()) this.skinnedSkip.add(i);
+    }
+    this.skinned.update(dt);
+
     for (let i = 0; i < c.capacity; i++) {
       if (!c.alive[i]) continue;
+      if (this.skinnedSkip.has(i)) continue;
       const spIdx = c.speciesIdx[i];
       const sp = SPECIES[spIdx];
       const mesh = this.meshes[spIdx];
@@ -843,6 +879,7 @@ export class CreatureRenderer {
       m.end();
       m.updateUniforms(world.clock.minutes * 0.02, snowCover, night);
     }
+    this.skinnedSkip.clear();
   }
 
   countInstances(): { near: number; far: number } {
@@ -856,6 +893,7 @@ export class CreatureRenderer {
   }
 
   dispose(): void {
+    this.skinned.dispose();
     for (const m of this.meshes) m.dispose();
   }
 }
