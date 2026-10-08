@@ -232,7 +232,7 @@ export class Census {
 
   /** Species ordered for display: iconic megafauna first, microbes last. */
   ordered(): SpeciesStat[] {
-    const order = ['wolf', 'bear', 'bison', 'deer', 'eagle', 'fox', 'owl', 'raven', 'rabbit', 'trout', 'mouse', 'insect', 'plankton'];
+    const order = ['wolf', 'bear', 'bison', 'deer', 'eagle', 'fox', 'owl', 'raven', 'rabbit', 'trout', 'perch', 'goat', 'lynx', 'heron', 'mouse', 'insect', 'plankton'];
     return order.map((k) => this.stats.get(k)).filter((s): s is SpeciesStat => !!s);
   }
 }

@@ -239,6 +239,10 @@ export class World {
       raven: 10,
       bear: 2,
       trout: 90,
+      goat: 24,
+      lynx: 2,
+      perch: 40,
+      heron: 3,
     };
     const scale = clamp01(this.params.seeding) * (this.terrain.size / 288);
     for (let s = 0; s < SPECIES.length; s++) {
