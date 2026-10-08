@@ -1319,19 +1319,20 @@ export class CreatureRenderer {
     for (const key of ['rabbit', 'deer', 'wolf', 'lynx'] as const) {
       const sp = SPECIES.find((x) => x.key === key);
       if (!sp) continue;
-      if (key === 'rabbit') {
+      if (key === 'rabbit' || key === 'deer') {
         // Generated smooth mesh (tools/animal_models); fall back to the hand-built one.
         const fallback = () => {
-          const rig = buildRiggedAnimal(buildRabbit(sp.morphology, true), sp.morphology.standHeight, true);
+          const build = key === 'rabbit' ? buildRabbit : buildDeer;
+          const rig = buildRiggedAnimal(build(sp.morphology, true), sp.morphology.standHeight, key === 'rabbit');
           this.skinned.addRigged(key, rig.scene, rig.animations);
         };
-        loadGeneratedRig('rabbit').then((rig) => this.skinned.addRigged(key, rig.scene, rig.animations), (err) => {
-          console.warn('[rig] generated rabbit failed, using hand-built', err);
+        loadGeneratedRig(key).then((rig) => this.skinned.addRigged(key, rig.scene, rig.animations), (err) => {
+          console.warn(`[rig] generated ${key} failed, using hand-built`, err);
           fallback();
         });
         continue;
       }
-      const build = key === 'deer' ? buildDeer : key === 'wolf' ? buildWolf : buildLynx;
+      const build = key === 'wolf' ? buildWolf : buildLynx;
       const geo = build(sp.morphology, true);
       const rig = buildRiggedAnimal(geo, sp.morphology.standHeight, false);
       this.skinned.addRigged(key, rig.scene, rig.animations);

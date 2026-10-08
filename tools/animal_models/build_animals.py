@@ -176,7 +176,77 @@ def rabbit_parts(m):
     return bones, parts
 
 
-SPECIES = {"rabbit": rabbit_parts}
+def deer_parts(m):
+    L, G, S, H = m["bodyLength"], m["bodyGirth"], m["standHeight"], m["headSize"]
+    fur, belly, accent, eye = m["fur"], m["belly"], m["accent"], m["eye"]
+    leg = [c * 0.78 for c in fur]
+    rump = [0.93, 0.91, 0.85]
+    neck = (L * 0.36, S + G * 0.2, 0.0)
+    head = (L * 0.66, S + G * 0.85, 0.0)
+    tail = (-L * 0.5, S + G * 0.3, 0.0)
+
+    bones = {
+        "body": (0.0, S, 0.0),
+        "head": neck,
+        "tail": tail,
+        "earL": (head[0] - H * 0.25, head[1] + H * 0.15, -H * 0.35),
+        "earR": (head[0] - H * 0.25, head[1] + H * 0.15, H * 0.35),
+        "legFL": (L * 0.32, S - G * 0.3, -G * 0.36),
+        "legFR": (L * 0.32, S - G * 0.3, G * 0.36),
+        "legRL": (-L * 0.3, S - G * 0.3, -G * 0.36),
+        "legRR": (-L * 0.3, S - G * 0.3, G * 0.36),
+    }
+
+    parts = []
+    # Barrel body, deeper at the chest.
+    parts.append(("body", "barrel", fur, 0.04, [
+        ("ell", (0.0, S, 0.0), (L * 0.42, G * 0.5, G * 0.52)),
+        ("ell", (L * 0.22, S - G * 0.02, 0.0), (L * 0.22, G * 0.46, G * 0.5)),
+    ]))
+    parts.append(("body", "belly", belly, 0.03, [
+        ("ell", (L * 0.02, S - G * 0.3, 0.0), (L * 0.3, G * 0.28, G * 0.36)),
+    ]))
+    parts.append(("body", "rump", rump, 0.02, [
+        ("ell", (-L * 0.42, S + G * 0.02, 0.0), (L * 0.12, G * 0.36, G * 0.5)),
+    ]))
+    # Long neck and narrow head.
+    parts.append(("head", "neckHead", fur, 0.04, [
+        ("cap", neck, head, G * 0.4),
+        ("ell", head, (H * 0.85, H * 0.5, H * 0.5)),
+        ("ell", (head[0] + H * 0.55, head[1] - H * 0.18, 0.0), (H * 0.9, H * 0.42, H * 0.4)),
+    ]))
+    parts.append(("head", "nose", accent, 0.02, [
+        ("ell", (head[0] + H * 1.1, head[1] - H * 0.25, 0.0), (H * 0.32, H * 0.28, H * 0.3)),
+    ]))
+    for side in (-1, 1):
+        parts.append(("head", f"eye{side}", eye, 0.01, [
+            ("ell", (head[0] + H * 0.2, head[1] + H * 0.22, side * H * 0.42), (H * 0.12, H * 0.12, H * 0.12)),
+        ]))
+        # Antlers: a beam with two tines on each side.
+        root = (head[0] - H * 0.2, head[1] + H * 0.45, side * H * 0.22)
+        tip = (root[0] - H * 0.3, root[1] + H * 2.0, side * H * 0.5)
+        parts.append(("head", f"antler{side}", accent, 0.02, [("cap", root, tip, H * 0.1)]))
+        for t in (0.45, 0.7):
+            at = tuple(root[i] + (tip[i] - root[i]) * t for i in range(3))
+            tine = (at[0] + H * 0.55, at[1] + H * 0.45, at[2] + side * H * 0.12)
+            parts.append(("head", f"tine{side}{t}", accent, 0.02, [("cap", at, tine, H * 0.06)]))
+    for side, name in ((-1, "earL"), (1, "earR")):
+        parts.append((name, "ear", fur, 0.03, [
+            ("ell", (head[0] - H * 0.25, head[1] + H * 0.3, side * H * 0.7), (H * 0.14, H * 0.55, H * 0.3)),
+        ]))
+    for side, name in ((-1, "legFL"), (1, "legFR")):
+        z = side * G * 0.36
+        parts.append((name, "leg", leg, 0.03, [("cap", (L * 0.32, S - G * 0.3, z), (L * 0.34, 0.02, z), G * 0.1)]))
+    for side, name in ((-1, "legRL"), (1, "legRR")):
+        z = side * G * 0.36
+        parts.append((name, "leg", leg, 0.03, [("cap", (-L * 0.3, S - G * 0.3, z), (-L * 0.32, 0.02, z), G * 0.1)]))
+    parts.append(("tail", "stub", belly, 0.02, [
+        ("ell", (-L * 0.52, S + G * 0.24, 0.0), (G * 0.12, G * 0.14, G * 0.12)),
+    ]))
+    return bones, parts
+
+
+SPECIES = {"rabbit": rabbit_parts, "deer": deer_parts}
 
 
 def build(key, outdir):
