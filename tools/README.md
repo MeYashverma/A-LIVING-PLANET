@@ -34,6 +34,19 @@ node /tmp/deaths2.mjs <seed>
 | `veg.ts`, `grow.ts` | Vegetation biomass and growth/regrowth rates per patch. |
 | `pred.ts`, `trout.ts`, `depth.ts` | Predation counts, trout population and starvation, and water depth at a point. |
 
+## Asset pipeline
+
+Not probes — these build and check the art the renderer uses.
+
+| script | what it does |
+| --- | --- |
+| `node tools/gen-tex.mjs` | Generates the bark, foliage, grass-card, water-normal and foam textures into `public/assets/gen`. Deterministic, needs only `sharp`. |
+| `node tools/fetch-assets.mjs [--force]` | Clones the pinned CC0 sources, transcodes the ground materials to the sizes the renderer binds, and applies the per-material brightness gains. Needs network. |
+| `node tools/texstats.mjs` | Prints the mean albedo of each ground material in encoded and linear light, next to the flat palette it replaced. Run this after changing a gain — a material that is far darker than its neighbours renders as a hole in the landscape. |
+
+Both generators need `sharp`, which is deliberately *not* a dependency of the
+app. Install it temporarily (`npm i --no-save sharp`) before running them.
+
 ## Notes
 
 - Probes are deterministic given a seed, so a fix and its before/after numbers

@@ -85,6 +85,9 @@ classic SIR dynamics, run per individual.
 | `Space` | pause / resume |
 | `1`–`7` | 1×, 2×, 5×, 10×, 25×, 50×, 100× |
 | `J` / `Shift+J` | jump a day or a week / a month |
+| `W` `A` `S` `D` | fly forward, back and sideways |
+| `←` `→` `↑` `↓` | the same, for one-handed flying |
+| `Q` `E` | turn the camera |
 | `F` `G` `C` `O` `V` | free, follow, cinematic, overhead, organism camera |
 | `P` | cycle scale |
 | `D` | documentary mode |
@@ -93,7 +96,9 @@ classic SIR dynamics, run per individual.
 | `?` | help |
 | `Esc` | clear selection |
 
-Mouse drags orbit, the wheel and pinch zoom, clicks select.
+Drag with the left button to orbit, with the right or middle button to pan, and
+with `Shift` held to pan. The wheel zooms — hold `Shift` for a fine step, `Ctrl`
+for a coarse one. Click selects; double-click selects an animal and follows it.
 
 ## Repository layout
 
@@ -103,12 +108,15 @@ src/world/      terrain, climate, hydrology, soil, vegetation, trees, fire,
                 aggregates, disease, census, history, world (the simulation host)
 src/life/       genome, spatial index, species definitions, organism store,
                 carcass store, AI, creature simulation
-src/render/     renderer, terrain mesh, vegetation and creature instancing,
-                props, effects, sky, selection, camera rig, overlay
+src/render/     renderer, triplanar terrain material, texture library,
+                vegetation and creature instancing, props, effects, sky,
+                selection, camera rig, overlay
 src/sim/        host loop, timing, persistence store
 src/ui/         HUD, panels, styles
 src/audio/      reactive ambience
-tools/          headless probes for testing the simulation (see tools/README.md)
+tools/          headless probes for testing the simulation (see tools/README.md),
+                plus the asset pipeline: gen-tex.mjs, fetch-assets.mjs, texstats.mjs
+public/assets/  CC0 ground materials and generated bark, foliage and water maps
 ```
 
 ## Testing
@@ -119,6 +127,22 @@ which is how the ecology is balanced. See `tools/README.md`.
 
 ## Assets
 
-Everything is generated procedurally at runtime, including textures, terrain,
-plants and animal geometry. The only third-party dependency is
+The ground is made of eight real scanned materials — grass, sand, rock, snow,
+dry ground, mossy stone, cliff rock and gravel — all of them **CC0 1.0** from
+[ambientCG](https://ambientcg.com), fetched through pinned GitHub mirrors and
+normalised to consistent brightness by `tools/fetch-assets.mjs`. Everything
+else is generated in this repository: bark, foliage, grass and reed cards, the
+water normal map and the foam map by `tools/gen-tex.mjs`, and terrain, plants,
+animals and sky procedurally at runtime.
+
+Full provenance and licence for every file is in
+[`public/assets/ATTRIBUTION.md`](public/assets/ATTRIBUTION.md). Nothing is
+fetched from a third party when the app runs; the only runtime dependency is
 [three.js](https://threejs.org) (MIT).
+
+## Hosting
+
+The build is a static bundle with relative asset paths, so it works from a
+subdirectory. `.github/workflows/deploy-pages.yml` builds and publishes it to
+GitHub Pages on every push to `main`; there is no server component and no
+backend to run.

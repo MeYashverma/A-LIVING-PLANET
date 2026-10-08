@@ -576,7 +576,10 @@ async function main(): Promise<void> {
   });
 
   /** Keys that fly the camera while held. */
-  const FLIGHT_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e', 'r', 'f', 'W', 'A', 'S', 'D', 'Q', 'E', 'R', 'F', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+  // Deliberately no R/F: F is already the free-camera shortcut, and shadowing a
+  // documented key is worse than having one fewer way to tilt the camera. The
+  // mouse pitches; the keyboard flies and turns.
+  const FLIGHT_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e', 'W', 'A', 'S', 'D', 'Q', 'E', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
 
   window.addEventListener('keyup', (ev) => {
     held.delete(ev.key);
@@ -642,10 +645,8 @@ async function main(): Promise<void> {
       const fwd = (held.has('w') || held.has('W') || held.has('ArrowUp') ? 1 : 0) - (held.has('s') || held.has('S') || held.has('ArrowDown') ? 1 : 0);
       const side = (held.has('d') || held.has('D') || held.has('ArrowRight') ? 1 : 0) - (held.has('a') || held.has('A') || held.has('ArrowLeft') ? 1 : 0);
       const turn = (held.has('e') || held.has('E') ? 1 : 0) - (held.has('q') || held.has('Q') ? 1 : 0);
-      const tilt = (held.has('f') || held.has('F') ? 1 : 0) - (held.has('r') || held.has('R') ? 1 : 0);
-      const boost = 1;
-      if (fwd || side) r.rig.moveInput(fwd * boost, side * boost, world, dt);
-      if (turn || tilt) r.rig.orbit(-turn * dt * 0.55, tilt * dt * 0.45);
+      if (fwd || side) r.rig.moveInput(fwd, side, world, dt);
+      if (turn) r.rig.orbit(-turn * dt * 0.55, 0);
     }
     current.frame(dt, now);
     r.selectedId = current.selectedId;

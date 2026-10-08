@@ -383,7 +383,7 @@ export class HUD {
       ['Right / middle-drag', 'Pan across the land'],
       ['Wheel', 'Zoom in and out'],
       ['W A S D', 'Fly forward, back and sideways (hold Shift to hurry)'],
-      ['Q E / R F', 'Turn and tilt the camera'],
+      ['Q E', 'Turn the camera (the mouse tilts it)'],
       ['Arrow keys', 'Same as W A S D, for one-handed flying'],
       ['Click', 'Select an animal, or apply the armed sandbox tool'],
       ['Double-click', 'Select an animal and follow it'],
