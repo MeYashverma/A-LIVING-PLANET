@@ -30,6 +30,12 @@ interface WaterUniforms {
  * the model says it is standing on.
  */
 /** A 1x1 zero height field, bound while there is no ripple simulation. */
+function blankFlowTexture(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Uint8Array([128, 128, 0, 255]), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.needsUpdate = true;
+  return tex;
+}
+
 function blankField(): THREE.DataTexture {
   const tex = new THREE.DataTexture(new Float32Array(4), 1, 1, THREE.RGBAFormat, THREE.FloatType);
   tex.needsUpdate = true;
@@ -52,6 +58,7 @@ export class TerrainMesh {
   private aoAttr: THREE.BufferAttribute;
   private groundUniforms: SplatUniforms;
   private waterTex: THREE.DataTexture | null = null;
+  private flowTex: THREE.DataTexture | null = null;
   private uniforms: WaterUniforms;
   private lastRefresh = -1e9;
   /** GPU ripple simulation, present only where float render targets exist. */
@@ -148,6 +155,9 @@ export class TerrainMesh {
       uNormalMap: { value: opts.textures.waterNormal },
       uFoamMap: { value: opts.textures.foam },
       uFlow: { value: new THREE.Vector2(0.03, 0.02) },
+      // Per-cell downhill direction (RG) and steepness (B) for water that runs downhill.
+      uFlowTex: { value: blankFlowTexture() },
+      uFlowHalf: { value: 1 },
       uTint: { value: new THREE.Color(0xffffff) },
       // Until a GPU simulation is attached, the sampler reads a blank field.
       uSim: { value: blankField() },
@@ -221,6 +231,8 @@ export class TerrainMesh {
         uniform vec3 uSunDir, uSunColor, uSkyColor, uShallow, uDeep, uTint;
         uniform float uTime, uFoam, uRain, uOpacity;
         uniform vec2 uWind, uFlow;
+        uniform sampler2D uFlowTex;
+        uniform float uFlowHalf;
         uniform sampler2D uNormalMap;
         uniform sampler2D uFoamMap;
         uniform sampler2D uSim;
@@ -239,7 +251,12 @@ export class TerrainMesh {
         vec3 rippleNormal(vec3 N, vec3 viewDir) {
           float dist = length(cameraPosition - vWorld);
           float fade = 1.0 - smoothstep(90.0, 320.0, dist);
-          vec2 flow = uWind * 0.004 + uFlow;
+          // Downhill flow from the terrain under this fragment: the surface
+          // detail is carried along the slope, faster where it is steeper.
+          // Flat water (lakes) has no slope and keeps the global drift.
+          vec4 fl = texture2D(uFlowTex, (vWorld.xz + uFlowHalf) / (2.0 * uFlowHalf));
+          vec2 fdir = fl.rg * 2.0 - 1.0;
+          vec2 flow = uWind * 0.004 + uFlow + fdir * fl.b * 0.02;
           vec2 uv1 = vUv * 0.32 + flow * uTime * 3.0;
           vec2 uv2 = vUv * 0.11 - flow * uTime * 1.7 + vec2(0.37, 0.11);
           vec3 n1 = texture2D(uNormalMap, uv1).xyz * 2.0 - 1.0;
@@ -509,11 +526,52 @@ export class TerrainMesh {
       this.waterTex.image = { data: bytes, width: n, height: n };
     }
     this.waterTex.needsUpdate = true;
+    this.updateFlow(wet, h);
     const g = this.groundUniforms;
     g.uWaterTex.value = this.waterTex;
     g.uWaterYMin.value = lo;
     g.uWaterYMax.value = hi;
     g.uWaterHalf.value = t.half;
+  }
+
+  /** Downhill direction and steepness per cell, for the water surface shader. */
+  private updateFlow(wet: Uint8Array, h: Float32Array | Float64Array | ArrayLike<number>): void {
+    const t = this.world.terrain;
+    const n = t.size;
+    const down = t.downhill;
+    const bytes = new Uint8Array(n * n * 4);
+    for (let i = 0; i < n * n; i++) {
+      let r = 128;
+      let g = 128;
+      let b = 0;
+      const j = down.length ? down[i] : -1;
+      if (wet[i] && j >= 0) {
+        const dx = (j % n) - (i % n);
+        const dy = Math.floor(j / n) - Math.floor(i / n);
+        const len = Math.hypot(dx, dy) || 1;
+        const grade = (t.elevationOf(h[i]) - t.elevationOf(h[j])) / (t.cellUnits * len);
+        r = Math.round((dx / len) * 0.5 * 255 + 127.5);
+        g = Math.round((dy / len) * 0.5 * 255 + 127.5);
+        b = Math.round(Math.min(1, Math.max(0, grade * 3)) * 255);
+      }
+      bytes[i * 4] = r;
+      bytes[i * 4 + 1] = g;
+      bytes[i * 4 + 2] = b;
+      bytes[i * 4 + 3] = 255;
+    }
+    if (!this.flowTex) {
+      this.flowTex = new THREE.DataTexture(bytes, n, n, THREE.RGBAFormat, THREE.UnsignedByteType);
+      this.flowTex.magFilter = THREE.LinearFilter;
+      this.flowTex.minFilter = THREE.LinearFilter;
+      this.flowTex.wrapS = THREE.ClampToEdgeWrapping;
+      this.flowTex.wrapT = THREE.ClampToEdgeWrapping;
+      this.flowTex.generateMipmaps = false;
+    } else {
+      this.flowTex.image = { data: bytes, width: n, height: n };
+    }
+    this.flowTex.needsUpdate = true;
+    this.uniforms.uFlowTex.value = this.flowTex;
+    this.uniforms.uFlowHalf.value = t.half;
   }
 
   /** Rebuild the water surface geometry from the hydrology fields. */

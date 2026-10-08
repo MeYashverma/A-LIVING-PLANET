@@ -174,6 +174,8 @@ export class Terrain {
   riverDepth: Field;
   /** Per-cell steepness 0..1. */
   slope: Field;
+  /** D8 downhill neighbour per cell on the filled surface (-1 at pits). Set by hydrology. */
+  downhill: Int32Array = new Int32Array(0);
   /** Dominant wind exposure: windward cells are cooler/wetter. */
   windExposure: Field;
 
@@ -683,6 +685,7 @@ export class Terrain {
         downIdx[i] = best;
       }
     }
+    this.downhill = downIdx;
 
     // Accumulate in descending height order.
     const order = new Int32Array(n * n);
