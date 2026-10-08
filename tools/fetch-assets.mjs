@@ -119,6 +119,32 @@ async function checkout(repoDir, files) {
   await run('git', ['-C', repoDir, 'sparse-checkout', 'set', '--no-cone', ...patterns], { maxBuffer: 1 << 28 });
 }
 
+/**
+ * A roughness map derived from an albedo map.
+ *
+ * Used only where a source set has no roughness pass, which is the case for the
+ * gravel scan. Gravel is uniformly rough, so the derived map stays in a narrow
+ * high band and takes only its variation from the albedo's luminance — enough to
+ * keep the surface from reading as plastic, and honest about being a stand-in.
+ * Shipping nothing here is worse: the loader falls back to a flat 1x1 and the
+ * material quietly loses all its surface variation.
+ */
+async function synthesiseRoughness(colorSrc, out) {
+  const size = SIZES.rough;
+  const { data, info } = await sharp(colorSrc).resize(size, size, { fit: 'cover' }).greyscale().raw().toBuffer({ resolveWithObject: true });
+  const out3 = Buffer.allocUnsafe(size * size * 3);
+  for (let i = 0; i < size * size; i++) {
+    const lum = data[i * info.channels];
+    // 0.80 .. 0.95: rough everywhere, with the grain coming from the scan.
+    const v = Math.round((0.8 + (lum / 255) * 0.15) * 255);
+    out3[i * 3] = v;
+    out3[i * 3 + 1] = v;
+    out3[i * 3 + 2] = v;
+  }
+  await sharp(out3, { raw: { width: size, height: size, channels: 3 } }).jpeg({ quality: QUALITY.rough }).toFile(out);
+  return (await stat(out)).size;
+}
+
 async function optimise(src, out, kind, name) {
   const size = SIZES[kind];
   const img = sharp(src).resize(size, size, { fit: 'cover' });
@@ -155,7 +181,19 @@ for (const src of SOURCES) {
       [rough, 'rough'],
     ];
     for (const [file, kind] of pairs) {
-      if (!file) continue;
+      const out = path.join(OUT, `${name}_${kind}.jpg`);
+      if (!file) {
+        // No source for this pass: derive it from the colour map if we can.
+        const colorSrc = path.join(repo, src.dir, src.files[name][0]);
+        if (kind === 'rough' && colorSrc) {
+          const bytes = await synthesiseRoughness(colorSrc, out);
+          total += bytes;
+          console.log(`  ${name}_${kind}.jpg  ${(bytes / 1024).toFixed(0)} KB  (derived from albedo)`);
+        } else {
+          console.warn(`  SKIP ${name}_${kind}: no source and no way to derive it`);
+        }
+        continue;
+      }
       const from = path.join(repo, src.dir, file);
       try {
         await access(from);
@@ -163,7 +201,6 @@ for (const src of SOURCES) {
         console.warn(`  MISSING ${from}`);
         continue;
       }
-      const out = path.join(OUT, `${name}_${kind}.jpg`);
       const bytes = await optimise(from, out, kind, name);
       total += bytes;
       console.log(`  ${name}_${kind}.jpg  ${(bytes / 1024).toFixed(0)} KB`);

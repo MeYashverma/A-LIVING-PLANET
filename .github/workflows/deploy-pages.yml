@@ -40,17 +40,35 @@ jobs:
       - name: Type-check and build
         run: npm run build
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-        with:
-          # Turn Pages on for this repository if it is not already, so the first
-          # run of this workflow is enough to publish the site.
-          enablement: true
-
+      # Uploaded before Pages is configured on purpose: a repository that has not
+      # switched Pages on yet still gets a working, downloadable site out of
+      # every successful build, rather than losing the artifact to a later step's
+      # permission error.
       - name: Upload the site
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
+
+      # Pages has to be enabled by a repository admin, once. A token issued to a
+      # workflow cannot do it, so check for it and say so plainly instead of
+      # failing three steps later with a stack trace.
+      - name: Verify the built site resolves under a project subdirectory
+        run: node tools/check-pages.mjs
+
+      - name: Check that Pages is enabled
+        # Advisory: a false negative here would block a deploy that would have
+        # worked, so the real gate stays configure-pages below.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh api "repos/${{ github.repository }}/pages" >/dev/null 2>&1; then
+            echo "::error title=GitHub Pages is not enabled for this repository::Open Settings → Pages, set Source to \"GitHub Actions\", then re-run this workflow. The built site is attached to this run as an artifact in the meantime."
+            exit 1
+          fi
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
 
   deploy:
     needs: build
