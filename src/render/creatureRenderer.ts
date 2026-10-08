@@ -308,6 +308,92 @@ export function buildWolf(m: Morphology, detail: boolean): THREE.BufferGeometry 
 }
 
 /**
+ * Lynx, built by hand: a compact body with long hind legs, large padded paws,
+ * a round head with a short muzzle, cheek ruffs, black-tipped ear tufts and a
+ * short stub tail.
+ */
+export function buildLynx(m: Morphology, detail: boolean): THREE.BufferGeometry {
+  const L = m.bodyLength;
+  const G = m.bodyGirth;
+  const S = m.standHeight;
+  const H = m.headSize;
+  const pieces: Piece[] = [];
+  const add = (geo: THREE.BufferGeometry, part: number, pivot: THREE.Vector3, color: [number, number, number]) => {
+    pieces.push({ geo: tag(geo, part, pivot), part, pivot: pivot.clone(), color });
+  };
+  const seg = detail ? 18 : 6;
+  const legCol: [number, number, number] = [m.fur[0] * 0.8, m.fur[1] * 0.8, m.fur[2] * 0.8];
+  const origin = new THREE.Vector3();
+  const sph = (rx: number, ry: number, rz: number, x: number, y: number, z: number, color: [number, number, number], seed: number, part = PART.body, pivot = origin) => {
+    const g = paint(bodyGeo(rx, ry, rz, seg), color, 0.06, seed);
+    g.translate(x, y, z);
+    add(g, part, pivot, color);
+  };
+
+  // Compact body, higher at the hindquarters.
+  sph(L * 0.32, G * 0.6, G * 0.62, 0, S + G * 0.03, 0, m.fur, 3);
+  sph(L * 0.24, G * 0.6, G * 0.62, -L * 0.2, S + G * 0.08, 0, m.fur, 5);
+  sph(L * 0.26, G * 0.3, G * 0.4, L * 0.02, S - G * 0.34, 0, m.belly, 7);
+
+  // Round head on a short neck.
+  const neckPivot = new THREE.Vector3(L * 0.34, S + G * 0.3, 0);
+  const headC = new THREE.Vector3(L * 0.55, S + G * 0.62, 0);
+  add(tube(neckPivot, headC, G * 0.42, H * 0.6, detail ? 14 : 6), PART.head, neckPivot, m.fur);
+  sph(H * 0.9, H * 0.82, H * 0.8, headC.x, headC.y, 0, m.fur, 13, PART.head, neckPivot);
+  // Cheek ruffs.
+  for (const side of [-1, 1]) {
+    sph(H * 0.4, H * 0.58, H * 0.42, headC.x - H * 0.1, headC.y - H * 0.28, side * H * 0.62, m.accent, 15 + side, PART.head, neckPivot);
+  }
+  // Short muzzle and nose.
+  sph(H * 0.5, H * 0.36, H * 0.4, headC.x + H * 0.62, headC.y - H * 0.2, 0, m.accent, 17, PART.head, neckPivot);
+  sph(H * 0.12, H * 0.1, H * 0.12, headC.x + H * 1.05, headC.y - H * 0.12, 0, m.eye, 19, PART.head, neckPivot);
+  if (detail) {
+    for (const side of [-1, 1]) {
+      sph(H * 0.12, H * 0.12, H * 0.12, headC.x + H * 0.42, headC.y + H * 0.2, side * H * 0.4, m.eye, 21, PART.head, neckPivot);
+    }
+  }
+
+  // Ears with black-tipped tufts.
+  for (const side of [-1, 1]) {
+    const part = side < 0 ? PART.earL : PART.earR;
+    const base = new THREE.Vector3(headC.x - H * 0.25, headC.y + H * 0.55, side * H * 0.42);
+    const ear = paint(new THREE.ConeGeometry(H * 0.3, H * 0.5, detail ? 10 : 4, 1), m.fur, 0.05, 23 + side);
+    ear.translate(base.x, base.y + H * 0.25, base.z);
+    add(ear, part, base, m.fur);
+    const tuft = paint(new THREE.ConeGeometry(H * 0.1, H * 0.4, detail ? 8 : 4, 1), m.eye, 0.03, 25 + side);
+    tuft.translate(base.x, base.y + H * 0.7, base.z);
+    add(tuft, part, base, m.eye);
+  }
+
+  // Long hind legs and shorter forelegs, with large padded paws.
+  for (const side of [-1, 1]) {
+    const shoulder = new THREE.Vector3(L * 0.28, S - G * 0.25, side * G * 0.4);
+    const paw = new THREE.Vector3(L * 0.32, 0.02, side * G * 0.4);
+    add(paint(mergeRaw([legGeo(shoulder.clone(), paw.clone(), G * 0.12, 2, detail ? 10 : 5)]), legCol, 0.05, 45 + side), side < 0 ? PART.legFL : PART.legFR, shoulder, legCol);
+    const hip = new THREE.Vector3(-L * 0.22, S - G * 0.2, side * G * 0.42);
+    const hindPaw = new THREE.Vector3(-L * 0.26, 0.02, side * G * 0.42);
+    const thigh = paint(bodyGeo(G * 0.38, G * 0.42, G * 0.34, detail ? 14 : 5), m.fur, 0.05, 31 + side);
+    thigh.translate(hip.x, hip.y, hip.z);
+    add(thigh, side < 0 ? PART.legRL : PART.legRR, hip, m.fur);
+    add(paint(mergeRaw([legGeo(hip.clone(), hindPaw.clone(), G * 0.13, 2, detail ? 10 : 5)]), legCol, 0.05, 47 + side), side < 0 ? PART.legRL : PART.legRR, hip, legCol);
+    const pad = paint(bodyGeo(L * 0.1, G * 0.1, G * 0.14, detail ? 10 : 4), legCol, 0.04, 49 + side);
+    pad.translate(paw.x + L * 0.02, 0.03, paw.z);
+    add(pad, side < 0 ? PART.legFL : PART.legFR, shoulder, legCol);
+  }
+
+  // Stub tail.
+  const tailPivot = new THREE.Vector3(-L * 0.5, S + G * 0.2, 0);
+  const tail = paint(new THREE.CylinderGeometry(G * 0.12, G * 0.18, G * 0.5, detail ? 10 : 5, 1), m.fur, 0.05, 51);
+  tail.rotateZ(-0.5);
+  tail.translate(tailPivot.x - G * 0.15, tailPivot.y - G * 0.1, 0);
+  add(tail, PART.tail, tailPivot, m.fur);
+
+  const merged = mergePieces(pieces);
+  applyPattern(merged, m);
+  return merged;
+}
+
+/**
  * Deer, built by hand: a slender barrel body, a long neck carrying a narrow
  * head, large ears, a branched antler pair, long slender legs with fine feet,
  * a pale rump patch and a short tail.
@@ -491,6 +577,7 @@ export function buildQuadruped(m: Morphology, detail: boolean, key?: string): TH
   if (key === 'rabbit') return buildRabbit(m, detail);
   if (key === 'deer') return buildDeer(m, detail);
   if (key === 'wolf') return buildWolf(m, detail);
+  if (key === 'lynx') return buildLynx(m, detail);
   const pieces: Piece[] = [];
   const stand = m.standHeight;
   const bl = m.bodyLength;
@@ -1229,10 +1316,10 @@ export class CreatureRenderer {
     this.skinned.load();
     // Hand-built species get a procedural rig from their own mesh, so their
     // close-ups are animated like the fox.
-    for (const key of ['rabbit', 'deer', 'wolf'] as const) {
+    for (const key of ['rabbit', 'deer', 'wolf', 'lynx'] as const) {
       const sp = SPECIES.find((x) => x.key === key);
       if (!sp) continue;
-      const build = key === 'rabbit' ? buildRabbit : key === 'deer' ? buildDeer : buildWolf;
+      const build = key === 'rabbit' ? buildRabbit : key === 'deer' ? buildDeer : key === 'wolf' ? buildWolf : buildLynx;
       const geo = build(sp.morphology, true);
       const rig = buildRiggedAnimal(geo, sp.morphology.standHeight, key === 'rabbit');
       this.skinned.addRigged(key, rig.scene, rig.animations);
