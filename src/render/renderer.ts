@@ -119,6 +119,7 @@ export class WorldRenderer {
       triplanar: this.quality === 'high' || this.quality === 'ultra',
     });
     this.scene.add(this.terrainMesh.group);
+    this.terrainMesh.attachRenderer(this.renderer);
     this.groundCover = new GroundCover(world, this.quality, textures);
     this.scene.add(this.groundCover.group);
     this.props = new Props(world, this.quality, textures);
@@ -230,13 +231,16 @@ export class WorldRenderer {
 
     // Ground colour tracks vegetation, snow, moisture and fire scars.
     this.terrainMesh.refresh();
+    const rainHere = world.climate.rainIntensityAt(camera.position.x, camera.position.z) / 1.4;
+    // Ripples: rain and the animals in the water drive the surface simulation.
+    this.terrainMesh.stepWater(rainHere, dt);
     this.terrainMesh.update(
       atmosphere.sunDir,
       this.sunColor,
       atmosphere.fogColor,
       world.climate.windSpeed,
       world.climate.windDirection,
-      world.climate.rainIntensityAt(camera.position.x, camera.position.z) / 1.4,
+      rainHere,
       dt,
       clamp01(world.fire.smoke * 0.4 + world.climate.globalDimming),
     );

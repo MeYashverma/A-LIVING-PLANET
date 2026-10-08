@@ -52,3 +52,4 @@ to give attribution, though it is appreciated."* The CC0 1.0 deed is at
 | [three.js](https://threejs.org) | MIT |
 | [Vite](https://vite.dev) | MIT |
 | [TypeScript](https://www.typescriptlang.org) | Apache-2.0 |
+| WebGL Water by Evan Wallace (algorithm and shader logic, adapted in `src/render/waterSim.ts`) | MIT, Copyright 2011 Evan Wallace, <http://madebyevan.com/webgl-water/> |

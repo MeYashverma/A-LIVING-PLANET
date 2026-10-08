@@ -4,6 +4,8 @@ import { BIOMES, Biome, PLANT_INDEX } from '../world/biomes';
 import type { World } from '../world/world';
 import type { TextureLibrary } from './textures';
 import { createGroundMaterial, type SplatUniforms } from './terrainGround';
+import { WaterSim } from './waterSim';
+import { SPECIES } from '../life/species';
 
 interface TerrainOptions {
   resolution: number;
@@ -27,6 +29,13 @@ interface WaterUniforms {
  * materials, so the ground under an animal is an honest picture of the ground
  * the model says it is standing on.
  */
+/** A 1x1 zero height field, bound while there is no ripple simulation. */
+function blankField(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Float32Array(4), 1, 1, THREE.RGBAFormat, THREE.FloatType);
+  tex.needsUpdate = true;
+  return tex;
+}
+
 export class TerrainMesh {
   readonly group = new THREE.Group();
   readonly ground: THREE.Mesh;
@@ -44,6 +53,14 @@ export class TerrainMesh {
   private groundUniforms: SplatUniforms;
   private uniforms: WaterUniforms;
   private lastRefresh = -1e9;
+  /** GPU ripple simulation, present only where float render targets exist. */
+  private sim: WaterSim | null = null;
+  /** Index of every wet cell, for rain to fall on. */
+  private wetCells = new Int32Array(0);
+  /** Per-creature state for splashes: was in water last frame, last disturbance point. */
+  private wasInWater = new Uint8Array(0);
+  private lastDisturbX = new Float32Array(0);
+  private lastDisturbY = new Float32Array(0);
 
   constructor(private world: World, opts: TerrainOptions) {
     const t = world.terrain;
@@ -131,6 +148,13 @@ export class TerrainMesh {
       uFoamMap: { value: opts.textures.foam },
       uFlow: { value: new THREE.Vector2(0.03, 0.02) },
       uTint: { value: new THREE.Color(0xffffff) },
+      // Until a GPU simulation is attached, the sampler reads a blank field.
+      uSim: { value: blankField() },
+      uSimOrigin: { value: new THREE.Vector2() },
+      uSimSize: { value: 1 },
+      uSimCell: { value: 1 },
+      uSimTexel: { value: 1 },
+      uSimAmp: { value: 1.0 },
     };
 
     const waterMat = new THREE.ShaderMaterial({
@@ -146,6 +170,11 @@ export class TerrainMesh {
         uniform float uTime;
         uniform vec2 uWind;
         uniform float uWave;
+        uniform sampler2D uSim;
+        uniform vec2 uSimOrigin;
+        uniform float uSimSize;
+        uniform float uSimAmp;
+        varying vec2 vSimUv;
         varying float vDepth;
         varying vec3 vWorld;
         varying vec3 vNormalW;
@@ -167,6 +196,11 @@ export class TerrainMesh {
           float a2 = amp * 0.6;
           float a3 = amp * 0.3;
           p.y += sin(k1) * a1 + sin(k2) * a2 + sin(k3) * a3;
+          // Ripples from the simulation, faded out at the shoreline so the
+          // edge of the water stays on the bank.
+          vSimUv = (position.xz - uSimOrigin) / uSimSize;
+          float simShore = smoothstep(0.0, 0.25, aDepth);
+          p.y += (texture2D(uSim, vSimUv).r * uSimAmp) * simShore;
           // Analytic slope of the same sum gives the surface normal.
           float dhdx = cos(k1) * a1 * 0.9 * dir.x + cos(k2) * a2 * 1.3 * dirB.x + cos(k3) * a3 * 2.4 * dirC.x;
           float dhdz = cos(k1) * a1 * 0.9 * dir.y + cos(k2) * a2 * 1.3 * dirB.y + cos(k3) * a3 * 2.4 * dirC.y;
@@ -188,6 +222,9 @@ export class TerrainMesh {
         uniform vec2 uWind, uFlow;
         uniform sampler2D uNormalMap;
         uniform sampler2D uFoamMap;
+        uniform sampler2D uSim;
+        uniform float uSimAmp, uSimCell, uSimTexel;
+        varying vec2 vSimUv;
         varying float vDepth;
         varying vec3 vWorld;
         varying vec3 vNormalW;
@@ -208,7 +245,14 @@ export class TerrainMesh {
           vec3 n2 = texture2D(uNormalMap, uv2).xyz * 2.0 - 1.0;
           vec3 detail = normalize(vec3(n1.xy * 0.75 + n2.xy * 0.5, 1.0));
           float scale = clamp(vDepth * 1.2, 0.15, 1.0) * fade;
-          return normalize(N + vec3(detail.x, 0.0, detail.y) * scale * 0.9);
+          N = normalize(N + vec3(detail.x, 0.0, detail.y) * scale * 0.9);
+          // Real ripple slope: the height field differenced over one cell
+          // (2.5 m) and scaled from sim units to metres.
+          float hx = texture2D(uSim, vSimUv + vec2(uSimTexel, 0.0)).r - texture2D(uSim, vSimUv - vec2(uSimTexel, 0.0)).r;
+          float hz = texture2D(uSim, vSimUv + vec2(0.0, uSimTexel)).r - texture2D(uSim, vSimUv - vec2(0.0, uSimTexel)).r;
+          vec2 slope = vec2(hx, hz) * uSimAmp / (2.0 * uSimCell);
+          float shoreK = smoothstep(0.0, 0.25, vDepth);
+          return normalize(N + vec3(-slope.x, 0.0, -slope.y) * shoreK);
         }
 
         void main() {
@@ -217,8 +261,10 @@ export class TerrainMesh {
 
           // Depth-based absorption: shallow water shows the bed, deep water
           // swallows every colour except blue-green, as water actually does.
-          float depth = clamp(vDepth, 0.0, 1.0);
-          vec3 base = mix(uShallow, uDeep, pow(depth, 0.55));
+          // vDepth is the water thickness in metres. Light is absorbed with
+          // depth, so a few metres of water already reads as deep.
+          float depth = 1.0 - exp(-vDepth * 0.35);
+          vec3 base = mix(uShallow, uDeep, depth);
 
           // Fresnel, with water's real reflectance at normal incidence.
           float cosI = clamp(dot(viewDir, N), 0.0, 1.0);
@@ -254,7 +300,7 @@ export class TerrainMesh {
 
           // Shallow water is clear enough to show the bed; deep water is opaque.
           // (Was inverted: deep water came out more transparent than shallow.)
-          float alpha = mix(uOpacity * 0.6, min(0.97, uOpacity + 0.06), depth);
+          float alpha = mix(uOpacity * 0.55, min(0.97, uOpacity + 0.06), 1.0 - exp(-vDepth * 0.5));
           // The water's edge is a depth contour, but the mesh is still built on
           // a grid. Fading alpha over the first few centimetres of depth hides
           // that grid: the water thins into the bank rather than ending on it.
@@ -387,16 +433,40 @@ export class TerrainMesh {
     this.geo.computeBoundingSphere();
   }
 
+  /**
+   * Water surface height and thickness at a terrain position, in world units.
+   * Sea cells are filled to sea level, which is the real surface of the sea.
+   * Lakes and rivers sit on their bed plus the depth the hydrology holds, which
+   * is in metres. Returns the surface height; thickness is surface minus bed.
+   */
+  surfaceAt(height: number, depthM: number): number {
+    const t = this.world.terrain;
+    const sea = t.params.seaLevel;
+    if (height < sea) return t.elevationOf(sea);
+    return t.elevationOf(height) + Math.max(0, depthM);
+  }
+
+  /** Wet mask for the simulation: 255 where a cell holds water, sea included. */
+  private wetMask(): Uint8Array {
+    const t = this.world.terrain;
+    const sea = t.params.seaLevel;
+    const h = t.height.data;
+    const d = t.waterDepth.data;
+    const mask = new Uint8Array(h.length);
+    for (let i = 0; i < h.length; i++) mask[i] = h[i] < sea || d[i] > 0.012 ? 255 : 0;
+    return mask;
+  }
+
   /** Rebuild the water surface geometry from the hydrology fields. */
   rebuildWater(): void {
     const t = this.world.terrain;
     const n = t.size;
+    const sea = t.params.seaLevel;
     const depthData = t.waterDepth.data;
     const heightData = t.height.data;
-    // Each simulation cell is split into SUB x SUB quads. Depth and ground are
-    // interpolated between cell centres, so the shoreline follows a smooth
-    // contour instead of stepping along the 2.5 m grid. The simulation itself
-    // is unchanged: this only changes how its fields are drawn.
+    // Each simulation cell is split into SUB x SUB quads. Surface height and
+    // ground are interpolated between cell centres, so the shoreline follows a
+    // smooth contour instead of stepping along the 2.5 m grid.
     const SUB = 3;
     const at = (data: ArrayLike<number>, x: number, y: number): number => {
       const cx = Math.min(n - 1, Math.max(0, x));
@@ -411,22 +481,28 @@ export class TerrainMesh {
       const b = data[y1 * n + x0] * (1 - fx) + data[y1 * n + x1] * fx;
       return a * (1 - fy) + b * fy;
     };
+    const isWetCell = (i: number) => heightData[i] < sea || depthData[i] > 0.012;
     const pos: number[] = [];
     const dep: number[] = [];
     const idx: number[] = [];
     for (let j = 0; j < n - 1; j++) {
       for (let i = 0; i < n - 1; i++) {
-        const d00 = depthData[j * n + i];
-        const d10 = depthData[j * n + i + 1];
-        const d01 = depthData[(j + 1) * n + i];
-        const d11 = depthData[(j + 1) * n + i + 1];
-        if (d00 < 0.012 && d10 < 0.012 && d01 < 0.012 && d11 < 0.012) continue;
-        // Only shorelines and banks need subdividing. Deep, even water and dry
-        // ground stay one quad per cell, which keeps the mesh affordable.
+        const c00 = j * n + i;
+        const c10 = c00 + 1;
+        const c01 = c00 + n;
+        const c11 = c01 + 1;
+        const wet = [isWetCell(c00), isWetCell(c10), isWetCell(c01), isWetCell(c11)];
+        if (!wet.some(Boolean)) continue;
+        const d00 = depthData[c00];
+        const d10 = depthData[c10];
+        const d01 = depthData[c01];
+        const d11 = depthData[c11];
+        // Coastlines and banks are subdivided. Open sea and deep, even lakes
+        // stay one quad per cell, which keeps the mesh affordable.
+        const coast = !wet.every(Boolean);
         const lo = Math.min(d00, d10, d01, d11);
         const hi = Math.max(d00, d10, d01, d11);
-        const shore = lo < 0.012 || hi - lo > 0.05;
-        const sub = shore ? SUB : 1;
+        const sub = coast || hi - lo > 0.05 ? SUB : 1;
         const stepN = 1 / sub;
         for (let sj = 0; sj < sub; sj++) {
           for (let si = 0; si < sub; si++) {
@@ -440,14 +516,16 @@ export class TerrainMesh {
               [x0, y1],
               [x1, y1],
             ];
-            const depths = quad.map(([x, y]) => at(depthData, x, y));
-            if (depths.every((d) => d < 0.012)) continue;
             const base = pos.length / 3;
-            quad.forEach(([x, y], k) => {
-              const depth = Math.max(0.02, depths[k]);
-              const ground = t.elevationOf(at(heightData, x, y));
-              pos.push(t.cellToWorldX(x), ground + depth, t.cellToWorldY(y));
-              dep.push(depth);
+            quad.forEach(([x, y]) => {
+              const bedH = at(heightData, x, y);
+              const depthM = at(depthData, x, y);
+              const surf = this.surfaceAt(bedH, depthM);
+              const bedY = t.elevationOf(bedH);
+              pos.push(t.cellToWorldX(x), surf, t.cellToWorldY(y));
+              // Thickness of water over the bed, in metres. Drives absorption,
+              // foam and the shoreline fade in the shader.
+              dep.push(Math.max(0, surf - bedY));
             });
             idx.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
           }
@@ -458,6 +536,98 @@ export class TerrainMesh {
     this.waterGeo.setAttribute('aDepth', new THREE.BufferAttribute(new Float32Array(dep), 1));
     this.waterGeo.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
     this.waterGeo.computeBoundingSphere();
+
+    // Keep the ripple simulation's wet mask and the rain targets in step.
+    const mask = this.wetMask();
+    const cells: number[] = [];
+    for (let i = 0; i < mask.length; i++) if (mask[i]) cells.push(i);
+    this.wetCells = Int32Array.from(cells);
+    this.sim?.setMask(mask);
+  }
+
+  /**
+   * Attach the GPU ripple simulation. Called once the renderer exists. Without
+   * float render targets the water keeps its analytic waves and nothing else.
+   */
+  attachRenderer(renderer: THREE.WebGLRenderer): void {
+    if (!WaterSim.supported(renderer)) return;
+    const t = this.world.terrain;
+    this.sim = new WaterSim(renderer, t.size, this.wetMask());
+    const u = this.uniforms;
+    u.uSim.value = this.sim.texture;
+    u.uSimOrigin.value = new THREE.Vector2(-t.half, -t.half);
+    u.uSimSize.value = t.worldSize;
+    u.uSimCell.value = t.cellUnits;
+    u.uSimTexel.value = 1 / t.size;
+    this.wasInWater = new Uint8Array(this.world.creatures.capacity);
+    this.lastDisturbX = new Float32Array(this.world.creatures.capacity);
+    this.lastDisturbY = new Float32Array(this.world.creatures.capacity);
+  }
+
+  /**
+   * Feed the ripple simulation with real events and advance it. Rain falls on
+   * wet cells at the simulated rainfall rate. Animals that enter water make a
+   * splash, and swimmers push the surface as they move. Nothing here is random
+   * beyond where the rain lands, and that is drawn from the rain rate.
+   */
+  stepWater(rain: number, dt: number): void {
+    const sim = this.sim;
+    if (!sim) return;
+    const t = this.world.terrain;
+    const c = this.world.creatures;
+
+    // Rain: expected drops this frame scale with the simulated rainfall rate.
+    const expected = clamp01(rain) * 40 * dt;
+    let drops = Math.floor(expected) + (Math.random() < expected % 1 ? 1 : 0);
+    if (this.wetCells.length) {
+      while (drops-- > 0) {
+        const cell = this.wetCells[Math.floor(Math.random() * this.wetCells.length)];
+        sim.disturb(cell % t.size, Math.floor(cell / t.size), 1.2, -0.03);
+      }
+    }
+
+    // Animals: splash on entry, ripple while moving through the water.
+    let budget = 48;
+    for (let s = 0; s < c.capacity && budget > 0; s++) {
+      if (!c.alive[s]) {
+        this.wasInWater[s] = 0;
+        continue;
+      }
+      const sp = SPECIES[c.speciesIdx[s]];
+      const cx = t.worldToCellX(c.x[s]);
+      const cy = t.worldToCellY(c.y[s]);
+      const ci = Math.min(t.size - 1, Math.max(0, Math.round(cx)));
+      const cj = Math.min(t.size - 1, Math.max(0, Math.round(cy)));
+      const cell = cj * t.size + ci;
+      const bedH = t.height.data[cell];
+      const depthM = t.waterDepth.data[cell];
+      const surf = this.surfaceAt(bedH, depthM);
+      const thickness = surf - t.elevationOf(bedH);
+      // In water if the surface is above the body and the water is at least
+      // a few centimetres deep here. Flyers never touch the surface.
+      const inWater = !c.flying[s] && thickness > 0.05 && c.z[s] < surf + 0.05;
+      const radius = clamp(sp.bodyLength * 0.5 / t.cellUnits, 0.8, 4);
+      const size = clamp(sp.bodyLength / 2, 0.2, 2);
+      if (inWater && !this.wasInWater[s]) {
+        sim.disturb(cx, cy, radius * 1.4, -0.12 * size);
+        this.lastDisturbX[s] = c.x[s];
+        this.lastDisturbY[s] = c.y[s];
+        budget--;
+      } else if (inWater) {
+        const dx = c.x[s] - this.lastDisturbX[s];
+        const dy = c.y[s] - this.lastDisturbY[s];
+        if (dx * dx + dy * dy > 1.5 * 1.5) {
+          sim.disturb(cx, cy, radius, -0.04 * size);
+          this.lastDisturbX[s] = c.x[s];
+          this.lastDisturbY[s] = c.y[s];
+          budget--;
+        }
+      }
+      this.wasInWater[s] = inWater ? 1 : 0;
+    }
+
+    sim.step(2);
+    this.uniforms.uSim.value = sim.texture;
   }
 
   /** Per-frame water and ground animation, driven by the real wind and rain. */
