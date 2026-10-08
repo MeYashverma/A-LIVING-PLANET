@@ -3,12 +3,13 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "A Living Planet — a real-time procedural ecosystem simulation and sandbox.",
+  "description": "A Living Planet \u2014 a real-time procedural ecosystem simulation and sandbox.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:pages": "node tools/check-pages.mjs"
   },
   "dependencies": {
     "three": "^0.186.0"
