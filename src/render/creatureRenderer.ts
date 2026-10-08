@@ -3,7 +3,7 @@ import { clamp, clamp01, lerp, TAU } from '../core/math';
 import type { Creatures } from '../life/organism';
 import { SPECIES, type Morphology } from '../life/species';
 import { SkinnedAnimals } from './skinnedAnimals';
-import { buildRiggedAnimal } from './proceduralRig';
+import { buildRiggedAnimal, loadGeneratedRig } from './proceduralRig';
 import { RENDER } from '../core/config';
 import type { World } from '../world/world';
 
@@ -1319,9 +1319,21 @@ export class CreatureRenderer {
     for (const key of ['rabbit', 'deer', 'wolf', 'lynx'] as const) {
       const sp = SPECIES.find((x) => x.key === key);
       if (!sp) continue;
-      const build = key === 'rabbit' ? buildRabbit : key === 'deer' ? buildDeer : key === 'wolf' ? buildWolf : buildLynx;
+      if (key === 'rabbit') {
+        // Generated smooth mesh (tools/animal_models); fall back to the hand-built one.
+        const fallback = () => {
+          const rig = buildRiggedAnimal(buildRabbit(sp.morphology, true), sp.morphology.standHeight, true);
+          this.skinned.addRigged(key, rig.scene, rig.animations);
+        };
+        loadGeneratedRig('rabbit').then((rig) => this.skinned.addRigged(key, rig.scene, rig.animations), (err) => {
+          console.warn('[rig] generated rabbit failed, using hand-built', err);
+          fallback();
+        });
+        continue;
+      }
+      const build = key === 'deer' ? buildDeer : key === 'wolf' ? buildWolf : buildLynx;
       const geo = build(sp.morphology, true);
-      const rig = buildRiggedAnimal(geo, sp.morphology.standHeight, key === 'rabbit');
+      const rig = buildRiggedAnimal(geo, sp.morphology.standHeight, false);
       this.skinned.addRigged(key, rig.scene, rig.animations);
     }
     this.nearCap = Math.max(24, Math.round(70 * detailScale));

@@ -12,6 +12,7 @@
  * the convention the skinned pool uses.
  */
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 /** Part ids from creatureRenderer's PART table. */
 const PART_NAMES: Record<number, string> = {
@@ -231,4 +232,105 @@ export function buildRiggedAnimal(geo: THREE.BufferGeometry, S: number, bound: b
   const scene = new THREE.Group();
   scene.add(group);
   return { scene, animations: buildClips(S, gait) };
+}
+
+/** Part name to animation part id (same table as creatureRenderer's PART). */
+const PART_IDS: Record<string, number> = {
+  body: 0,
+  legFL: 1,
+  legFR: 2,
+  legRL: 3,
+  legRR: 4,
+  head: 5,
+  tail: 6,
+  earL: 10,
+  earR: 11,
+};
+
+/**
+ * Turn a generated GLB (one mesh per part, named "<part>|<label>") into one
+ * tagged geometry: colours from the file, aPart from the part name, aPivot from
+ * the sidecar's bone positions. The result feeds buildRiggedAnimal.
+ */
+export function taggedFromScene(scene: THREE.Object3D, bones: Record<string, [number, number, number]>): THREE.BufferGeometry {
+  scene.updateMatrixWorld(true);
+  type Chunk = { pos: number[]; nor: number[]; col: number[]; part: number; piv: [number, number, number]; idx: number[] };
+  const chunks: Chunk[] = [];
+  scene.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const name = (mesh.name || '').split('|')[0];
+    const part = PART_IDS[name];
+    if (part === undefined || !bones[name]) return;
+    const g = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld);
+    const pos = g.getAttribute('position') as THREE.BufferAttribute;
+    const nor = g.getAttribute('normal') as THREE.BufferAttribute | undefined;
+    const col = g.getAttribute('color') as THREE.BufferAttribute | undefined;
+    const n = pos.count;
+    const c: Chunk = { pos: [], nor: [], col: [], part, piv: bones[name], idx: [] };
+    for (let i = 0; i < n; i++) {
+      c.pos.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+      if (nor) c.nor.push(nor.getX(i), nor.getY(i), nor.getZ(i));
+      else c.nor.push(0, 1, 0);
+      if (col) c.col.push(col.getX(i), col.getY(i), col.getZ(i));
+      else c.col.push(1, 1, 1);
+    }
+    const index = g.getIndex();
+    if (index) for (let i = 0; i < index.count; i++) c.idx.push(index.getX(i));
+    else for (let i = 0; i < n; i++) c.idx.push(i);
+    chunks.push(c);
+  });
+
+  let vCount = 0;
+  let iCount = 0;
+  for (const c of chunks) {
+    vCount += c.pos.length / 3;
+    iCount += c.idx.length;
+  }
+  const pos = new Float32Array(vCount * 3);
+  const nor = new Float32Array(vCount * 3);
+  const col = new Float32Array(vCount * 3);
+  const part = new Float32Array(vCount);
+  const piv = new Float32Array(vCount * 3);
+  const idx = new Uint32Array(iCount);
+  let vo = 0;
+  let io = 0;
+  for (const c of chunks) {
+    const n = c.pos.length / 3;
+    pos.set(c.pos, vo * 3);
+    nor.set(c.nor, vo * 3);
+    col.set(c.col, vo * 3);
+    part.fill(c.part, vo, vo + n);
+    for (let i = 0; i < n; i++) {
+      piv[(vo + i) * 3] = c.piv[0];
+      piv[(vo + i) * 3 + 1] = c.piv[1];
+      piv[(vo + i) * 3 + 2] = c.piv[2];
+    }
+    for (let i = 0; i < c.idx.length; i++) idx[io + i] = c.idx[i] + vo;
+    io += c.idx.length;
+    vo += n;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  out.setAttribute('aPart', new THREE.BufferAttribute(part, 1));
+  out.setAttribute('aPivot', new THREE.BufferAttribute(piv, 3));
+  out.setIndex(new THREE.BufferAttribute(idx, 1));
+  return out;
+}
+
+/** Load a generated species (GLB plus sidecar JSON) and build its rig. */
+export function loadGeneratedRig(key: string): Promise<RiggedAnimal> {
+  const base = `assets/models/animals/${key}`;
+  return Promise.all([
+    new GLTFLoader().loadAsync(`${base}.glb`),
+    fetch(`${base}.json`).then((r) => {
+      if (!r.ok) throw new Error(`${base}.json ${r.status}`);
+      return r.json() as Promise<{ bones: Record<string, [number, number, number]>; standHeight: number }>;
+    }),
+  ]).then(([gltf, side]) => {
+    const geo = taggedFromScene(gltf.scene, side.bones);
+    return buildRiggedAnimal(geo, side.standHeight, key === 'rabbit');
+  });
 }
