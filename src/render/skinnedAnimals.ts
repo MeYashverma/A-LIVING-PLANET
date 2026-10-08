@@ -60,6 +60,11 @@ export class SkinnedAnimals {
     this.attach(species, scene, animations, clips);
   }
 
+  /** Skinned animals per species that can be drawn at once. */
+  capacity(): number {
+    return this.poolSize;
+  }
+
   /** Species that currently have a rig. */
   species(): string[] {
     return [...this.pools.keys()];

@@ -1326,7 +1326,9 @@ export class CreatureRenderer {
 
   constructor(private world: World, quality: 'low' | 'medium' | 'high' | 'ultra') {
     const detailScale = quality === 'low' ? 0.35 : quality === 'medium' ? 0.6 : 1;
-    this.skinned = new SkinnedAnimals(this.group, quality === 'low' ? 4 : 12);
+    // Skinned animals per species: the nearest ones within creatureAnimDistance.
+    const skinnedCap = quality === 'low' ? 6 : quality === 'medium' ? 16 : quality === 'high' ? 30 : 40;
+    this.skinned = new SkinnedAnimals(this.group, skinnedCap);
     this.skinned.load();
     // Hand-built species get a procedural rig from their own mesh, so their
     // close-ups are animated like the fox.
@@ -1400,7 +1402,7 @@ export class CreatureRenderer {
       picks.sort((a, b) => dist(a) - dist(b));
       this.skinned.place(
         key,
-        picks.slice(0, 12),
+        picks.slice(0, this.skinned.capacity()),
         c,
         SPECIES[spIdx].morphology.bodyLength,
         (i) => lerpAngle(c.prevHeading[i], c.heading[i], alpha),
