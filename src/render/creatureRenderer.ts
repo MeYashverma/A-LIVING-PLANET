@@ -153,7 +153,7 @@ function mergeRaw(geos: THREE.BufferGeometry[], color: [number, number, number] 
 }
 
 /** Quadruped: body, neck, head, ears, four legs, tail, optional headgear. */
-function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
+export function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
   const pieces: Piece[] = [];
   const stand = m.standHeight;
   const bl = m.bodyLength;
@@ -173,12 +173,14 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
   const neckPivot = new THREE.Vector3(bl * 0.42, bodyY + girth * 0.35, 0);
   const neckLen = m.neck + m.headSize * 0.5;
   const neck = paint(new THREE.CylinderGeometry(m.headSize * 0.32, girth * 0.5, 1, detail ? 18 : 5, detail ? 6 : 1), m.fur, 0.06, 11);
+  // Orient the neck about its own centre first, then move it so its base sits
+  // on the shoulder pivot and its far end reaches the head. Translating before
+  // rotating swings the neck around the world origin and detaches the head.
   neck.scale(1, neckLen, 1);
-  neck.translate(neckPivot.x, neckPivot.y, 0);
   const neckDir = new THREE.Vector3(1, 0.45, 0).normalize();
   const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), neckDir);
   neck.applyQuaternion(q);
-  neck.translate(0, 0, 0);
+  neck.translate(neckPivot.x + neckDir.x * neckLen * 0.5, neckPivot.y + neckDir.y * neckLen * 0.5, 0);
   pieces.push({ geo: tag(neck, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.fur });
 
   const headPos = new THREE.Vector3(neckPivot.x + neckDir.x * neckLen, neckPivot.y + neckDir.y * neckLen, 0);
@@ -291,8 +293,22 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
   return merged;
 }
 
+/**
+ * A tapered tube from `from` to `to`. The cylinder is oriented about its own
+ * centre first and only then moved to the midpoint, so its ends land exactly on
+ * the two points. Translating before rotating moves it off the points.
+ */
+function tube(from: THREE.Vector3, to: THREE.Vector3, rFrom: number, rTo: number, radial: number): THREE.BufferGeometry {
+  const dir = new THREE.Vector3().subVectors(to, from);
+  const len = Math.max(0.001, dir.length());
+  const g = new THREE.CylinderGeometry(rTo, rFrom, len, radial, 4);
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize()));
+  g.translate((from.x + to.x) / 2, (from.y + to.y) / 2, (from.z + to.z) / 2);
+  return g;
+}
+
 /** Bird: body, head+beak, tail fan, wings. */
-function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry {
+export function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry {
   const pieces: Piece[] = [];
   const stand = m.standHeight;
   const bl = m.bodyLength;
@@ -310,6 +326,13 @@ function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry {
   const head = paint(bodyGeo(m.headSize * 0.8, m.headSize * 0.75, m.headSize * 0.75, detail ? 18 : 5), m.fur, 0.05, 47);
   head.translate(headPivot.x + m.headSize * 0.3, headPivot.y, 0);
   pieces.push({ geo: tag(head, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.fur });
+
+  // Neck: a tapered tube from the chest up to the head. Every bird gets one;
+  // without it a heron's head sits on its body like a bead.
+  const neckBase = new THREE.Vector3(bl * 0.3, stand + girth * 0.2, 0);
+  const neckTop = new THREE.Vector3(headPivot.x + m.headSize * 0.1, headPivot.y - m.headSize * 0.05, 0);
+  const neckGeo = tube(neckBase, neckTop, girth * 0.42, m.headSize * 0.32, detail ? 14 : 6);
+  pieces.push({ geo: tag(paint(neckGeo, m.fur, 0.05, 49), PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.fur });
 
   // Birds get the same eyes-and-nose treatment as mammals: at close range a
   // dark eye is what makes a hawk read as watching something.
@@ -356,7 +379,7 @@ function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry {
 }
 
 /** Fish: fusiform body, tail fin, dorsal fin, side fins. */
-function buildFish(m: Morphology, detail: boolean): THREE.BufferGeometry {
+export function buildFish(m: Morphology, detail: boolean): THREE.BufferGeometry {
   const pieces: Piece[] = [];
   const bl = m.bodyLength;
   const girth = m.bodyGirth;
