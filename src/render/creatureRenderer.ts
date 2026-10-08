@@ -247,6 +247,8 @@ export function buildDeer(m: Morphology, detail: boolean): THREE.BufferGeometry 
     pieces.push({ geo: tag(geo, part, pivot), part, pivot: pivot.clone(), color });
   };
   const seg = detail ? 18 : 6;
+  // Legs take a darker shade of the coat, so they do not read as bare sticks.
+  const legCol: [number, number, number] = [m.fur[0] * 0.78, m.fur[1] * 0.78, m.fur[2] * 0.78];
   const origin = new THREE.Vector3();
   const sph = (rx: number, ry: number, rz: number, x: number, y: number, z: number, color: [number, number, number], seed: number, part = PART.body, pivot = origin) => {
     const g = paint(bodyGeo(rx, ry, rz, seg), color, 0.05, seed);
@@ -302,10 +304,10 @@ export function buildDeer(m: Morphology, detail: boolean): THREE.BufferGeometry 
   for (const side of [-1, 1]) {
     const shoulder = new THREE.Vector3(L * 0.32, S - G * 0.3, side * G * 0.36);
     const hoof = new THREE.Vector3(L * 0.34, 0.02, side * G * 0.36);
-    add(mergeRaw([legGeo(shoulder.clone(), hoof.clone(), G * 0.1, 3, detail ? 10 : 5)]), side < 0 ? PART.legFL : PART.legFR, shoulder, m.accent);
+    add(paint(mergeRaw([legGeo(shoulder.clone(), hoof.clone(), G * 0.1, 3, detail ? 10 : 5)]), legCol, 0.05, 45 + side), side < 0 ? PART.legFL : PART.legFR, shoulder, legCol);
     const hip = new THREE.Vector3(-L * 0.3, S - G * 0.3, side * G * 0.36);
     const hindHoof = new THREE.Vector3(-L * 0.32, 0.02, side * G * 0.36);
-    add(mergeRaw([legGeo(hip.clone(), hindHoof.clone(), G * 0.1, 3, detail ? 10 : 5)]), side < 0 ? PART.legRL : PART.legRR, hip, m.accent);
+    add(paint(mergeRaw([legGeo(hip.clone(), hindHoof.clone(), G * 0.1, 3, detail ? 10 : 5)]), legCol, 0.05, 47 + side), side < 0 ? PART.legRL : PART.legRR, hip, legCol);
   }
 
   // Short tail.
@@ -332,6 +334,8 @@ export function buildRabbit(m: Morphology, detail: boolean): THREE.BufferGeometr
     pieces.push({ geo: tag(geo, part, pivot), part, pivot: pivot.clone(), color });
   };
   const seg = detail ? 18 : 6;
+  // Legs take a darker shade of the coat, so they do not read as bare sticks.
+  const legCol: [number, number, number] = [m.fur[0] * 0.78, m.fur[1] * 0.78, m.fur[2] * 0.78];
   const origin = new THREE.Vector3();
   const sph = (rx: number, ry: number, rz: number, x: number, y: number, z: number, color: [number, number, number], seed: number, part = PART.body, pivot = origin) => {
     const g = paint(bodyGeo(rx, ry, rz, seg), color, 0.06, seed);
@@ -340,9 +344,9 @@ export function buildRabbit(m: Morphology, detail: boolean): THREE.BufferGeometr
   };
 
   // Torso: a rounded body with the haunch at the rear.
-  sph(L * 0.34, G * 0.55, G * 0.6, 0, S, 0, m.fur, 3);
-  sph(L * 0.22, G * 0.66, G * 0.72, -L * 0.2, S + G * 0.05, 0, m.fur, 5);
-  sph(L * 0.2, G * 0.5, G * 0.52, L * 0.26, S - G * 0.04, 0, m.fur, 7);
+  sph(L * 0.38, G * 0.6, G * 0.64, 0, S, 0, m.fur, 3);
+  sph(L * 0.26, G * 0.7, G * 0.74, -L * 0.18, S + G * 0.04, 0, m.fur, 5);
+  sph(L * 0.22, G * 0.52, G * 0.55, L * 0.22, S - G * 0.03, 0, m.fur, 7);
   sph(L * 0.3, G * 0.3, G * 0.4, L * 0.02, S - G * 0.34, 0, m.belly, 9);
 
   // Neck and head.
@@ -382,7 +386,7 @@ export function buildRabbit(m: Morphology, detail: boolean): THREE.BufferGeometr
     const shoulder = new THREE.Vector3(L * 0.3, S - G * 0.4, side * G * 0.4);
     const paw = new THREE.Vector3(L * 0.34, 0.03, side * G * 0.4);
     const part = side < 0 ? PART.legFL : PART.legFR;
-    add(mergeRaw([legGeo(shoulder.clone(), paw.clone(), G * 0.13, 2, detail ? 10 : 5)]), part, shoulder, m.accent);
+    add(paint(mergeRaw([legGeo(shoulder.clone(), paw.clone(), G * 0.13, 2, detail ? 10 : 5)]), legCol, 0.05, 45 + part), part, shoulder, legCol);
   }
 
   // Hind legs: a big thigh at the hip and a long hind foot.
@@ -392,9 +396,9 @@ export function buildRabbit(m: Morphology, detail: boolean): THREE.BufferGeometr
     const thigh = paint(bodyGeo(G * 0.42, G * 0.46, G * 0.36, detail ? 14 : 5), m.fur, 0.05, 31 + side);
     thigh.translate(hip.x, hip.y, hip.z);
     add(thigh, part, hip, m.fur);
-    const shin = paint(legGeo(hip.clone(), new THREE.Vector3(-L * 0.12, 0.05, side * G * 0.5), G * 0.14, 2, detail ? 10 : 5), m.accent, 0.05, 37 + side);
+    const shin = paint(legGeo(hip.clone(), new THREE.Vector3(-L * 0.12, 0.05, side * G * 0.5), G * 0.14, 2, detail ? 10 : 5), legCol, 0.05, 37 + side);
     add(shin, part, hip, m.accent);
-    const foot = paint(bodyGeo(L * 0.2, G * 0.1, G * 0.2, detail ? 12 : 5), m.accent, 0.04, 41 + side);
+    const foot = paint(bodyGeo(L * 0.2, G * 0.1, G * 0.2, detail ? 12 : 5), legCol, 0.04, 41 + side);
     foot.translate(-L * 0.08, 0.05, side * G * 0.5);
     add(foot, part, hip, m.accent);
   }

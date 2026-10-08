@@ -195,12 +195,27 @@ export function buildRiggedAnimal(geo: THREE.BufferGeometry, S: number, bound: b
     group.add(bone);
   }
 
-  // Full skin weight to the part's own bone, so each part moves rigidly.
+  // Each vertex follows its part's bone. Vertices close to a joint are also
+  // partly weighted to the body bone, so a bent leg or neck deforms smoothly
+  // instead of splitting along the joint.
+  const bodyBone = boneIndex.get(0) ?? 0;
+  const blend = S * 0.3;
+  const posAttr = geo.getAttribute('position') as THREE.BufferAttribute;
   const skinIndex = new Uint16Array(count * 4);
   const skinWeight = new Float32Array(count * 4);
   for (let v = 0; v < count; v++) {
-    skinIndex[v * 4] = boneIndex.get(partAttr.getX(v)) ?? 0;
+    const own = boneIndex.get(partAttr.getX(v)) ?? 0;
+    skinIndex[v * 4] = own;
     skinWeight[v * 4] = 1;
+    if (own !== bodyBone) {
+      const d = new THREE.Vector3(posAttr.getX(v), posAttr.getY(v), posAttr.getZ(v)).distanceTo(bones[own].position);
+      const w = Math.max(0, 1 - d / blend) * 0.5;
+      if (w > 0) {
+        skinIndex[v * 4 + 1] = bodyBone;
+        skinWeight[v * 4] = 1 - w;
+        skinWeight[v * 4 + 1] = w;
+      }
+    }
   }
   geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndex, 4));
   geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeight, 4));
