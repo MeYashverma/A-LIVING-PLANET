@@ -5,6 +5,7 @@
  */
 import './ui/styles.css';
 import { WorldRenderer } from './render/renderer';
+import { TextureLibrary } from './render/textures';
 import { Overlay } from './render/overlay';
 import { HUD } from './ui/hud';
 import { Panels } from './ui/panels';
@@ -42,8 +43,15 @@ async function main(): Promise<void> {
   bootStep('seeding soil, plants and animals…', 0.4);
   await nextFrame();
 
+  // Textures load before the renderer is built: a material needs its maps at
+  // compile time, not a promise of them.
+  bootStage = 'loading materials';
+  const textures = new TextureLibrary();
+  await textures.load((p) => bootStep(`loading materials\u2026 ${Math.round(p * 100)}%`, 0.5 + p * 0.12));
+  await nextFrame();
+
   bootStage = 'world renderer';
-  renderer = new WorldRenderer(viewport, host.world, settings);
+  renderer = new WorldRenderer(viewport, host.world, settings, textures);
   let current = host;
 
   bootStep('starting the frame loop…', 0.7);
@@ -244,7 +252,7 @@ async function main(): Promise<void> {
   function rebuildForCurrentWorld(): void {
     const world = current.world;
     renderer?.dispose();
-    renderer = new WorldRenderer(viewport, world, current.settings);
+    renderer = new WorldRenderer(viewport, world, current.settings, textures);
     renderer.applySettings(current.settings);
     renderer.setViewOptions({ showLabels: current.settings.showLabels, showTrails: current.settings.showTrails }, world);
     current.select(null);
@@ -348,18 +356,30 @@ async function main(): Promise<void> {
   let moved = 0;
   let brushAt: { x: number; y: number; valid: boolean } | null = null;
 
-  function ndc(ev: PointerEvent): { x: number; y: number } {
+  function ndc(ev: { clientX: number; clientY: number }): { x: number; y: number } {
     const rect = canvas.getBoundingClientRect();
     return { x: ((ev.clientX - rect.left) / rect.width) * 2 - 1, y: -(((ev.clientY - rect.top) / rect.height) * 2 - 1) };
   }
 
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // Held movement keys, applied smoothly in the frame loop rather than in steps
+  // per keypress: flying should feel continuous, not notched.
+  const held = new Set<string>();
+
   canvas.addEventListener('pointerdown', (ev) => {
     canvas.setPointerCapture(ev.pointerId);
     lastX = ev.clientX;
     lastY = ev.clientY;
     moved = 0;
-    dragging = ev.button === 2 || ev.shiftKey ? 'pan' : 'tool';
+    // Right button, middle button or Shift pans; anything else orbits, unless a
+    // sandbox tool is armed, in which case it paints.
+    const wantsPan = ev.button === 2 || ev.button === 1 || ev.shiftKey;
+    dragging = wantsPan ? 'pan' : current.tool === 'inspect' || ev.button === 0 ? 'orbit' : 'tool';
+    if (!wantsPan && current.tool !== 'inspect') {
+      dragging = 'tool';
+    }
+    canvas.style.cursor = dragging === 'pan' ? 'grabbing' : dragging === 'orbit' ? 'move' : 'crosshair';
     if (dragging === 'tool' && current.tool !== 'inspect') {
       const p = renderer!.screenToGround(ndc(ev).x, ndc(ev).y, current.world);
       if (p) brushAt = { x: p.x, y: p.z, valid: true };
@@ -369,13 +389,15 @@ async function main(): Promise<void> {
     const dx = ev.clientX - lastX;
     const dy = ev.clientY - lastY;
     moved += Math.abs(dx) + Math.abs(dy);
-    if (dragging === 'pan' || (dragging === 'orbit' && ev.buttons === 0)) {
-      if (ev.buttons & 1 || dragging === 'pan') renderer!.rig.pan(dx, dy, current.world);
+    const panning = (ev.buttons & 4) !== 0 || (ev.buttons & 2) !== 0 || ev.shiftKey || ev.button === 1;
+    if (dragging === 'pan' || panning) {
+      renderer!.rig.pan(dx, dy, current.world);
     } else if (ev.buttons & 1) {
-      if (current.tool === 'inspect') renderer!.rig.orbit(dx * 0.005, dy * 0.005);
-      else {
+      if (dragging === 'tool') {
         const p = renderer!.screenToGround(ndc(ev).x, ndc(ev).y, current.world);
         if (p) brushAt = { x: p.x, y: p.z, valid: true };
+      } else {
+        renderer!.rig.orbit(dx, dy);
       }
     }
     lastX = ev.clientX;
@@ -415,12 +437,28 @@ async function main(): Promise<void> {
     }
     brushAt = null;
     dragging = null;
+    canvas.style.cursor = current.tool === 'inspect' ? 'grab' : 'crosshair';
+  });
+
+  // Double-clicking an animal selects it and starts following it, which is the
+  // fastest way to go from a wide view to one life story.
+  canvas.addEventListener('dblclick', (ev) => {
+    const id = renderer!.pickOrganism(ndc(ev).x, ndc(ev).y, current.world);
+    if (id === null) return;
+    current.select(id);
+    current.follow(id);
+    setCamera(current, renderer!, 'follow');
+    panels.setTab('organism');
+    hud.toast(`Following ${SPECIES_NAME(current, id)}.`);
   });
   canvas.addEventListener(
     'wheel',
     (ev) => {
       ev.preventDefault();
-      renderer!.rig.zoom(ev.deltaY * 0.0025, current.world);
+      // Three orders of magnitude of zoom in one gesture: a coarse step for
+      // whole-landscape moves, fine when a modifier is held.
+      const fine = ev.shiftKey ? 0.25 : ev.ctrlKey ? 2.4 : 1;
+      renderer!.rig.zoom(ev.deltaY * 0.0025 * fine, current.world);
     },
     { passive: false },
   );
@@ -454,6 +492,12 @@ async function main(): Promise<void> {
     }
     const target = ev.target as HTMLElement | null;
     if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) return;
+    // Flight keys are held, not tapped, so they are tracked rather than acted on.
+    if (FLIGHT_KEYS.has(ev.key)) {
+      held.add(ev.key);
+      ev.preventDefault();
+      return;
+    }
     switch (ev.key) {
       case ' ':
         ev.preventDefault();
@@ -531,6 +575,15 @@ async function main(): Promise<void> {
     }
   });
 
+  /** Keys that fly the camera while held. */
+  const FLIGHT_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e', 'r', 'f', 'W', 'A', 'S', 'D', 'Q', 'E', 'R', 'F', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+
+  window.addEventListener('keyup', (ev) => {
+    held.delete(ev.key);
+  });
+  // Releasing focus must not leave the camera flying forever.
+  window.addEventListener('blur', () => held.clear());
+
   let lastScale: ScaleLevel = 'region';
 
   // First interaction starts audio (browser policy).
@@ -583,6 +636,17 @@ async function main(): Promise<void> {
   }
 
   function frameBody(now: number, dt: number, r: WorldRenderer, world: World): void {
+    // Camera flight: held keys move the rig every frame, scaled by the frame
+    // time so the speed is the same at 30 fps and 144 fps.
+    if (held.size) {
+      const fwd = (held.has('w') || held.has('W') || held.has('ArrowUp') ? 1 : 0) - (held.has('s') || held.has('S') || held.has('ArrowDown') ? 1 : 0);
+      const side = (held.has('d') || held.has('D') || held.has('ArrowRight') ? 1 : 0) - (held.has('a') || held.has('A') || held.has('ArrowLeft') ? 1 : 0);
+      const turn = (held.has('e') || held.has('E') ? 1 : 0) - (held.has('q') || held.has('Q') ? 1 : 0);
+      const tilt = (held.has('f') || held.has('F') ? 1 : 0) - (held.has('r') || held.has('R') ? 1 : 0);
+      const boost = 1;
+      if (fwd || side) r.rig.moveInput(fwd * boost, side * boost, world, dt);
+      if (turn || tilt) r.rig.orbit(-turn * dt * 0.55, tilt * dt * 0.45);
+    }
     current.frame(dt, now);
     r.selectedId = current.selectedId;
     r.update(world, dt);

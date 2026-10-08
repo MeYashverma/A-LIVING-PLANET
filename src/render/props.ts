@@ -6,6 +6,7 @@ import { HomeKind } from '../life/organism';
 import { QUALITY_PRESETS, RENDER } from '../core/config';
 import { SPECIES } from '../life/species';
 import type { World } from '../world/world';
+import type { MaterialSet, TextureLibrary } from './textures';
 
 interface InstancedSet {
   mesh: THREE.InstancedMesh;
@@ -39,7 +40,7 @@ export class Props {
   private dummy = new THREE.Object3D();
   private timeUniforms: Record<string, THREE.IUniform>[] = [];
 
-  constructor(private world: World, quality: 'low' | 'medium' | 'high' | 'ultra') {
+  constructor(private world: World, quality: 'low' | 'medium' | 'high' | 'ultra', private textures?: TextureLibrary) {
     const preset = QUALITY_PRESETS[quality];
     const treeCap = Math.max(200, Math.round(3400 * preset.trees));
 
@@ -47,7 +48,8 @@ export class Props {
     for (let sp = 0; sp < TREE_SPECIES.length; sp++) {
       for (const detail of [true, false]) {
         const geo = sp === 0 ? buildBroadleaf(detail) : buildConifer(detail);
-        const set = this.makeSet(geo, treeCap, 'tree', detail);
+        const barkSet = textures?.bark?.[sp === 0 ? 'oak' : 'pine'];
+        const set = this.makeSet(geo, treeCap, 'tree', detail, barkSet);
         this.trees.push(set);
         this.group.add(set.mesh);
       }
@@ -56,7 +58,8 @@ export class Props {
 
     this.saplings = this.makeSet(buildBroadleaf(false, true), Math.round(treeCap * 0.5), 'sapling', true);
     this.logs = this.makeSet(buildLog(), Math.round(treeCap * 0.25), 'log', true);
-    this.rocks = this.makeSet(buildRock(), Math.round(420 * preset.trees), 'rock', true);
+    this.rocks = this.makeSet(buildRock(), Math.round(420 * preset.trees), 'rock', true, textures?.ground?.cliff);
+    void this.textures;
     this.carcasses = this.makeSet(buildCarcass(), 90, 'carcass', true);
     this.nests = this.makeSet(buildNest(), 120, 'nest', true);
     this.burrows = this.makeSet(buildBurrow(), 160, 'burrow', true);
@@ -67,7 +70,7 @@ export class Props {
     void TREE_SPECIES;
   }
 
-  private makeSet(geo: THREE.BufferGeometry, capacity: number, kind: string, detail: boolean): InstancedSet {
+  private makeSet(geo: THREE.BufferGeometry, capacity: number, kind: string, detail: boolean, bark?: MaterialSet): InstancedSet {
     const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 });
     const uniforms = {
       uTime: { value: 0 },
@@ -76,6 +79,11 @@ export class Props {
       uAutumn: { value: 0 },
       uSnow: { value: 0 },
       uMoon: { value: 0 },
+      uBarkScale: { value: 3.0 },
+      uBarkColor: { value: bark ? bark.color : null },
+      uBarkNormal: { value: bark ? bark.normal : null },
+      uBarkRough: { value: bark ? bark.rough : null },
+      uHasBark: { value: bark ? 1 : 0 },
     };
     this.timeUniforms.push(uniforms);
     material.onBeforeCompile = (shader) => {
@@ -84,6 +92,11 @@ export class Props {
       shader.uniforms.uAutumn = uniforms.uAutumn;
       shader.uniforms.uSnow = uniforms.uSnow;
       shader.uniforms.uMoon = uniforms.uMoon;
+      shader.uniforms.uBarkScale = uniforms.uBarkScale;
+      shader.uniforms.uBarkColor = uniforms.uBarkColor;
+      shader.uniforms.uBarkNormal = uniforms.uBarkNormal;
+      shader.uniforms.uBarkRough = uniforms.uBarkRough;
+      shader.uniforms.uHasBark = uniforms.uHasBark;
       shader.vertexShader = shader.vertexShader
         .replace(
           '#include <common>',
@@ -100,6 +113,12 @@ export class Props {
           varying float vBurn;
           varying float vSnow;
           varying float vLocalY;
+          varying vec3 vLocalPos;
+          uniform float uBarkScale;
+          uniform sampler2D uBarkColor;
+          uniform sampler2D uBarkNormal;
+          uniform sampler2D uBarkRough;
+          uniform float uHasBark;
         `,
         )
         .replace(
@@ -110,6 +129,7 @@ export class Props {
           vBurn = aBurn;
           vSnow = aSnow;
           vLocalY = position.y;
+          vLocalPos = position;
           // Sway is proportional to height above the base and to wind strength.
           float h = max(position.y, 0.0);
           float bend = h * h * 0.0025;
@@ -153,6 +173,22 @@ export class Props {
             vec3 target = mix(summer, autumn, uAutumn);
             target = mix(target, winter, clamp(1.0 - vFoliage, 0.0, 1.0) * 0.5);
             diffuseColor.rgb = mix(target, diffuseColor.rgb * 0.8, 0.35) * (0.85 + vFoliage * 0.3);
+          } else if (uHasBark > 0.5 && !isCanopy) {
+            // Trunks get real bark, box-projected in object space: a cylinder
+            // has no sensible single UV set once several primitives are merged,
+            // and a box projection tiles it correctly on every face.
+            vec3 p = vLocalPos;
+            vec3 n = normalize(vLocalPos + vec3(0.0, 0.001, 0.0));
+            vec3 bw = pow(abs(n), vec3(6.0));
+            bw /= max(1e-4, bw.x + bw.y + bw.z);
+            float s = uBarkScale;
+            vec3 tex = texture2D(uBarkColor, p.zy * s).rgb * bw.x
+                     + texture2D(uBarkColor, p.xz * s).rgb * bw.y
+                     + texture2D(uBarkColor, p.xy * s).rgb * bw.z;
+            // Bark is darker and cooler than the flat colour it replaces, and
+            // the replace is partial so the per-tree tint still shows through.
+            diffuseColor.rgb = mix(diffuseColor.rgb, tex * diffuseColor.rgb * 3.2, 0.72);
+            diffuseColor.rgb *= mix(0.86, 1.04, clamp(vLocalY * 0.12, 0.0, 1.0));
           } else {
             // Bark darkens when wet and lightens with snow load.
             diffuseColor.rgb *= mix(0.8, 1.05, clamp(vLocalY * 0.1, 0.0, 1.0));

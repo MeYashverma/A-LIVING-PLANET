@@ -193,6 +193,26 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
   muzzle.translate(headPos.x + m.headSize * 0.85, headPos.y - m.headSize * 0.1, 0);
   pieces.push({ geo: tag(muzzle, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.accent });
 
+  // Eyes and nose. Small, dark and strongly contrasting: nothing else at this
+  // size makes an animal read as looking at something rather than as a shape
+  // pointed in a direction.
+  if (detail) {
+    const eyeR = Math.max(0.012, m.headSize * 0.16);
+    for (const side of [-1, 1]) {
+      const eye = paint(new THREE.SphereGeometry(eyeR, 8, 6), m.eye, 0.02, 37);
+      eye.translate(headPos.x + m.headSize * 0.42, headPos.y + m.headSize * 0.2, side * m.headSize * 0.36);
+      pieces.push({ geo: tag(eye, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.eye });
+      // A hint of brow above the eye, which is what gives a face expression.
+      const brow = paint(new THREE.BoxGeometry(eyeR * 2.2, eyeR * 0.5, eyeR * 1.6), m.accent, 0.03, 41);
+      brow.rotateZ(-0.25);
+      brow.translate(headPos.x + m.headSize * 0.4, headPos.y + m.headSize * 0.42, side * m.headSize * 0.36);
+      pieces.push({ geo: tag(brow, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.accent });
+    }
+    const nose = paint(new THREE.SphereGeometry(m.headSize * 0.16, 6, 5), m.eye, 0.02, 43);
+    nose.translate(headPos.x + m.headSize * 1.24, headPos.y - m.headSize * 0.14, 0);
+    pieces.push({ geo: tag(nose, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.eye });
+  }
+
   // Ears.
   if (m.earSize > 0.03 && detail) {
     for (const side of [-1, 1]) {
@@ -291,6 +311,17 @@ function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry {
   head.translate(headPivot.x + m.headSize * 0.3, headPivot.y, 0);
   pieces.push({ geo: tag(head, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.fur });
 
+  // Birds get the same eyes-and-nose treatment as mammals: at close range a
+  // dark eye is what makes a hawk read as watching something.
+  if (detail) {
+    const eyeR = Math.max(0.01, m.headSize * 0.18);
+    for (const side of [-1, 1]) {
+      const eye = paint(new THREE.SphereGeometry(eyeR, 8, 6), m.eye, 0.02, 61);
+      eye.translate(headPivot.x + m.headSize * 0.42, headPivot.y + m.headSize * 0.12, side * m.headSize * 0.34);
+      pieces.push({ geo: tag(eye, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.eye });
+    }
+  }
+
   const beak = paint(new THREE.ConeGeometry(m.headSize * 0.22, m.headSize * 0.9, 5), m.accent, 0.04, 53);
   beak.rotateZ(-Math.PI / 2);
   beak.translate(headPivot.x + m.headSize * 1.1, headPivot.y, 0);
@@ -340,6 +371,16 @@ function buildFish(m: Morphology, detail: boolean): THREE.BufferGeometry {
   const head = paint(bodyGeo(m.headSize * 0.6, m.headSize * 0.5, m.headSize * 0.55, 6), m.fur, 0.05, 71);
   head.translate(bl * 0.32, 0, 0);
   pieces.push({ geo: tag(head, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.fur });
+
+  // Eyes, set high on the head as they are on a trout.
+  if (detail) {
+    const eyeR = Math.max(0.008, m.headSize * 0.22);
+    for (const side of [-1, 1]) {
+      const eye = paint(new THREE.SphereGeometry(eyeR, 6, 5), m.eye, 0.02, 79);
+      eye.translate(bl * 0.38, m.headSize * 0.22, side * m.headSize * 0.3);
+      pieces.push({ geo: tag(eye, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.eye });
+    }
+  }
 
   // Tail fin.
   const tailPivot = new THREE.Vector3(-bl * 0.42, 0, 0);

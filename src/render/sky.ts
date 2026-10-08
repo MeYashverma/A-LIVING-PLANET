@@ -148,7 +148,7 @@ export class Sky {
     this.dome.renderOrder = -1000;
     scene.add(this.dome);
 
-    this.sun = new THREE.DirectionalLight(0xfff0d0, 2.1);
+    this.sun = new THREE.DirectionalLight(0xfff0d0, 2.45);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
     this.sun.shadow.camera.near = 1;
@@ -224,7 +224,7 @@ export class Sky {
     (u.uHorizon.value as THREE.Color).copy(horizon);
     (u.uGround.value as THREE.Color).copy(horizon.clone().multiplyScalar(0.55));
     this.hemi.color.copy(horizon).lerp(new THREE.Color(0xffffff), 0.3);
-    this.hemi.intensity = lerp(0.2, 0.48, clamp01(sunUp)) * (1 - clamp01(cloudMean) * 0.35);
+    this.hemi.intensity = lerp(0.24, 0.62, clamp01(sunUp)) * (1 - clamp01(cloudMean) * 0.32);
     this.ambient.intensity = lerp(0.07, 0.1, clamp01(sunUp));
     this.hemi.position.copy(cameraPos).add(new THREE.Vector3(0, 60, 0));
 

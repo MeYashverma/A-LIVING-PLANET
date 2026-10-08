@@ -15,6 +15,7 @@ import { Props } from './props';
 import { Effects } from './effects';
 import { SelectionVisuals } from './selection';
 import { CameraRig, type CameraMode, type ScaleLevel } from './cameraRig';
+import { TextureLibrary } from './textures';
 
 export interface RenderStats {
   fps: number;
@@ -53,6 +54,7 @@ export class WorldRenderer {
   readonly props: Props;
   readonly effects: Effects;
   readonly selection: SelectionVisuals;
+  readonly textures: TextureLibrary;
 
   stats: RenderStats = { fps: 0, frameMs: 0, drawCalls: 0, triangles: 0, programs: 0, nearAnimals: 0, farAnimals: 0, grass: 0, trees: 0, gpuMemory: 0 };
 
@@ -71,7 +73,7 @@ export class WorldRenderer {
   private view: ViewOptions = { showLabels: true, showTrails: true, showTerritories: true, cameraMode: 'free' };
   private sunColor = new THREE.Color(0xfff0d0);
 
-  constructor(container: HTMLElement, world: World, settings: Settings) {
+  constructor(container: HTMLElement, world: World, settings: Settings, textures: TextureLibrary) {
     this.container = container;
     this.settings = settings;
     this.quality = settings.quality;
@@ -83,6 +85,16 @@ export class WorldRenderer {
       stencil: false,
       alpha: false,
     });
+    // A shader that fails to compile renders black and says so only in the
+    // browser console. Print the compiler's own log with the source, because a
+    // silent black world is impossible to diagnose from the outside.
+    this.renderer.debug.checkShaderErrors = true;
+    this.renderer.debug.onShaderError = (gl, program, vs, fs) => {
+      const info = gl.getProgramInfoLog(program) ?? '';
+      const vlog = gl.getShaderInfoLog(vs) ?? '';
+      const flog = gl.getShaderInfoLog(fs) ?? '';
+      console.error('[shader] program failed to link\n', info, '\nvertex:\n', vlog, '\nfragment:\n', flog);
+    };
     this.renderer.setClearColor(0x0a0d12, 1);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -95,15 +107,21 @@ export class WorldRenderer {
     this.renderer.domElement.style.height = '100%';
     container.appendChild(this.renderer.domElement);
 
+    this.textures = textures;
     this.rig = new CameraRig(1);
     this.scene.fog = new THREE.FogExp2(0xa8bcd0, 0.0022);
 
     this.sky = new Sky(this.scene, world);
-    this.terrainMesh = new TerrainMesh(world, { resolution: this.terrainResolution(), shadows: preset.shadow > 0 });
+    this.terrainMesh = new TerrainMesh(world, {
+      resolution: this.terrainResolution(),
+      shadows: preset.shadow > 0,
+      textures: this.textures,
+      triplanar: this.quality === 'high' || this.quality === 'ultra',
+    });
     this.scene.add(this.terrainMesh.group);
-    this.groundCover = new GroundCover(world, this.quality);
+    this.groundCover = new GroundCover(world, this.quality, textures);
     this.scene.add(this.groundCover.group);
-    this.props = new Props(world, this.quality);
+    this.props = new Props(world, this.quality, textures);
     this.scene.add(this.props.group);
     this.creatures = new CreatureRenderer(world, this.quality);
     this.scene.add(this.creatures.group);

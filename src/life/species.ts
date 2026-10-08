@@ -22,6 +22,8 @@ export interface Morphology {
   fur: [number, number, number];
   belly: [number, number, number];
   accent: [number, number, number];
+  /** Eye and nose colour. Almost always dark; a few species have pale ones. */
+  eye: [number, number, number];
   wingSpan: number;
   wingStyle: 'none' | 'soaring' | 'flapping' | 'short';
   finStyle: 'none' | 'dorsal' | 'paddle';
@@ -244,6 +246,7 @@ export const SPECIES: SpeciesDef[] = [
       fur: [0.52, 0.44, 0.36],
       belly: [0.84, 0.8, 0.72],
       accent: [0.24, 0.2, 0.18],
+      eye: [0.053, 0.044, 0.043],
       wingSpan: 0,
       wingStyle: 'none',
       finStyle: 'none',
@@ -343,6 +346,7 @@ export const SPECIES: SpeciesDef[] = [
       fur: [0.42, 0.31, 0.21],
       belly: [0.6, 0.52, 0.42],
       accent: [0.3, 0.24, 0.18],
+      eye: [0.066, 0.053, 0.043],
       wingSpan: 0,
       wingStyle: 'none',
       finStyle: 'none',
@@ -441,6 +445,7 @@ export const SPECIES: SpeciesDef[] = [
       fur: [0.29, 0.22, 0.16],
       belly: [0.36, 0.28, 0.2],
       accent: [0.16, 0.13, 0.11],
+      eye: [0.035, 0.029, 0.026],
       wingSpan: 0,
       wingStyle: 'none',
       finStyle: 'none',
@@ -540,6 +545,7 @@ export const SPECIES: SpeciesDef[] = [
       fur: [0.38, 0.37, 0.36],
       belly: [0.52, 0.51, 0.48],
       accent: [0.2, 0.19, 0.19],
+      eye: [0.044, 0.042, 0.046],
       wingSpan: 0,
       wingStyle: 'none',
       finStyle: 'none',
@@ -640,6 +646,7 @@ export const SPECIES: SpeciesDef[] = [
       fur: [0.62, 0.31, 0.14],
       belly: [0.78, 0.74, 0.68],
       accent: [0.24, 0.16, 0.12],
+      eye: [0.053, 0.035, 0.029],
       wingSpan: 0,
       wingStyle: 'none',
       finStyle: 'none',
@@ -740,6 +747,7 @@ export const SPECIES: SpeciesDef[] = [
       fur: [0.36, 0.27, 0.17],
       belly: [0.55, 0.48, 0.36],
       accent: [0.16, 0.13, 0.1],
+      eye: [0.035, 0.029, 0.024],
       wingSpan: 2.2,
       wingStyle: 'soaring',
       finStyle: 'none',
@@ -839,6 +847,7 @@ export const SPECIES: SpeciesDef[] = [
       fur: [0.44, 0.36, 0.26],
       belly: [0.6, 0.55, 0.45],
       accent: [0.2, 0.17, 0.14],
+      eye: [0.044, 0.037, 0.034],
       wingSpan: 1.7,
       wingStyle: 'flapping',
       finStyle: 'none',
@@ -939,6 +948,7 @@ export const SPECIES: SpeciesDef[] = [
       fur: [0.1, 0.1, 0.13],
       belly: [0.14, 0.14, 0.17],
       accent: [0.26, 0.26, 0.3],
+      eye: [0.057, 0.057, 0.072],
       wingSpan: 1.25,
       wingStyle: 'flapping',
       finStyle: 'none',
@@ -1038,6 +1048,7 @@ export const SPECIES: SpeciesDef[] = [
       fur: [0.32, 0.23, 0.15],
       belly: [0.4, 0.32, 0.22],
       accent: [0.18, 0.14, 0.1],
+      eye: [0.04, 0.031, 0.024],
       wingSpan: 0,
       wingStyle: 'none',
       finStyle: 'none',
@@ -1134,6 +1145,7 @@ export const SPECIES: SpeciesDef[] = [
       fur: [0.44, 0.38, 0.26],
       belly: [0.76, 0.72, 0.6],
       accent: [0.5, 0.24, 0.18],
+      eye: [0.11, 0.053, 0.043],
       wingSpan: 0,
       wingStyle: 'none',
       finStyle: 'dorsal',
