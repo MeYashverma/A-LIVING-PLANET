@@ -4,6 +4,18 @@ import type { Creatures } from '../life/organism';
 import { SPECIES, type Morphology } from '../life/species';
 import { SkinnedAnimals } from './skinnedAnimals';
 import { buildRiggedAnimal, loadGeneratedRig } from './proceduralRig';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+
+/**
+ * Real CC0 rigged models by Quaternius (Ultimate Animated Animal Pack), with
+ * their clip names mapped to the simulation's states. See ATTRIBUTION.md.
+ * The chamois stands in for the mountain goat.
+ */
+const QUATERNIUS: Partial<Record<string, { url: string; clips: { idle: string; walk: string; run: string; rest: string; die: string; bite: string } }>> = {
+  deer: { url: 'assets/models/quaternius/stag.glb', clips: { idle: 'Idle', walk: 'Walk', run: 'Gallop', rest: 'Eating', die: 'Death', bite: 'Attack_Headbutt' } },
+  wolf: { url: 'assets/models/quaternius/wolf.glb', clips: { idle: 'Idle', walk: 'Walk', run: 'Gallop', rest: 'Eating', die: 'Death', bite: 'Attack' } },
+  goat: { url: 'assets/models/quaternius/chamois.glb', clips: { idle: 'Idle', walk: 'Walk', run: 'Gallop', rest: 'Idle_Headlow', die: 'Death', bite: 'Attack_Headbutt' } },
+};
 import { RENDER } from '../core/config';
 import type { World } from '../world/world';
 
@@ -1319,16 +1331,27 @@ export class CreatureRenderer {
     for (const key of ['rabbit', 'deer', 'wolf', 'lynx', 'bison', 'goat', 'bear'] as const) {
       const sp = SPECIES.find((x) => x.key === key);
       if (!sp) continue;
-      // Generated smooth mesh (tools/animal_models); fall back to the hand-built one.
+      // Hand-built fallback, used if both GLB sources fail to load.
       const fallback = () => {
         const build = key === 'rabbit' ? buildRabbit : key === 'deer' ? buildDeer : key === 'wolf' ? buildWolf : key === 'lynx' ? buildLynx : (mm: Morphology, d: boolean) => buildQuadruped(mm, d, key);
         const rig = buildRiggedAnimal(build(sp.morphology, true), sp.morphology.standHeight, key === 'rabbit');
         this.skinned.addRigged(key, rig.scene, rig.animations);
       };
-      loadGeneratedRig(key).then((rig) => this.skinned.addRigged(key, rig.scene, rig.animations), (err) => {
+      // Generated smooth mesh (tools/animal_models) next.
+      const generated = () => loadGeneratedRig(key).then((rig) => this.skinned.addRigged(key, rig.scene, rig.animations), (err) => {
         console.warn(`[rig] generated ${key} failed, using hand-built`, err);
         fallback();
       });
+      // Real CC0 model by Quaternius first (public/assets/models/quaternius).
+      const q = QUATERNIUS[key];
+      if (q) {
+        new GLTFLoader().loadAsync(q.url).then((gltf) => this.skinned.addRigged(key, gltf.scene, gltf.animations, q.clips), (err) => {
+          console.warn(`[rig] Quaternius ${key} failed, using generated`, err);
+          generated();
+        });
+      } else {
+        generated();
+      }
     }
     this.nearCap = Math.max(24, Math.round(70 * detailScale));
     this.farCap = Math.max(120, Math.round(320 * detailScale));

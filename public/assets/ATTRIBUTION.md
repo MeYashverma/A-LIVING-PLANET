@@ -45,6 +45,20 @@ these assets for free in any project, including commercial ones. You do not need
 to give attribution, though it is appreciated."* The CC0 1.0 deed is at
 <https://creativecommons.org/publicdomain/zero/1.0/>.
 
+## Downloaded — animal models
+
+| File in `public/assets/models/quaternius/` | Model | Source | Licence |
+| --- | --- | --- | --- |
+| `stag.glb` (game species: deer) | Stag, rigged, clips Walk, Gallop, Idle, Eating, Idle_Headlow, Attack_Headbutt, Death | Quaternius, *Ultimate Animated Animal Pack* (<https://quaternius.com/packs/ultimateanimatedanimals.html>). Copy taken from `postojomierz-lang/postojomierz` (`rysy/models/animals/stag.glb`), recoloured there | CC0-1.0 (`QUATERNIUS-LICENSE.txt`) |
+| `wolf.glb` (wolf) | Wolf, rigged, clips Walk, Gallop, Idle, Eating, Attack, Death | As above, `rysy/models/animals/wolf.glb` | CC0-1.0 |
+| `chamois.glb` (goat; a chamois stands in for the mountain goat) | Chamois, deer-based, rigged, clips as the stag | As above, `rysy/models/animals/chamois.glb`, reshaped from the deer by the source repo | CC0-1.0 |
+
+The Quaternius licence is in `public/assets/models/quaternius/QUATERNIUS-LICENSE.txt`.
+
+Generated animal models (`public/assets/models/animals/`: rabbit, deer, wolf, lynx,
+bison, goat, bear) come from `tools/animal_models/build_animals.py` in this repository.
+They are procedural, and are the fallback when a Quaternius model fails to load.
+
 ## Third-party software
 
 | Package | Licence |
