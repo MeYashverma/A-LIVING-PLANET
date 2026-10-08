@@ -1,8 +1,14 @@
 /**
- * HUD: the fixed instrument bars, toasts, documentary captions and modal
- * dialogs. Everything it shows is read from the world through the host — the
- * numbers here are the same numbers the simulation uses.
+ * HUD: the top instrument strip, the floating control dock, toasts, documentary
+ * captions and modal dialogs. Everything it shows is read from the world through
+ * the host — the numbers here are the same numbers the simulation uses.
+ *
+ * Layout (desktop): a slim top strip (world, clock, weather, speed, actions), a
+ * floating dock at the bottom (camera, scale, sandbox tools), the minimap in the
+ * lower-left corner and toasts under the strip on the right. Styling lives in
+ * hud.css; this file only builds structure and keeps it in sync with the world.
  */
+import './hud.css';
 import { Minimap } from './minimap';
 import { SEASON_NAMES } from '../core/time';
 import { TIME } from '../core/config';
@@ -42,214 +48,300 @@ const SCALE_LEVELS: { level: ScaleLevel; label: string }[] = [
   { level: 'micro', label: 'Micro' },
 ];
 
-const TOOLS: { tool: ToolKind; label: string; hint: string }[] = [
-  { tool: 'inspect', label: 'Inspect', hint: 'Click an animal to open its file. Drag to orbit, right-drag to pan.' },
-  { tool: 'spawn', label: 'Release', hint: 'Click land to release animals of the selected species.' },
-  { tool: 'plant', label: 'Sow', hint: 'Click to sow vegetation — grass, shrubs or reeds.' },
-  { tool: 'tree', label: 'Plant tree', hint: 'Click to plant a stand of trees.' },
-  { tool: 'raise', label: 'Raise', hint: 'Drag terrain up. Mountains change wind, rain and biomes.' },
-  { tool: 'lower', label: 'Lower', hint: 'Drag terrain down — dig valleys, expose groundwater.' },
-  { tool: 'flatten', label: 'Flatten', hint: 'Click to level the land under the cursor.' },
-  { tool: 'water', label: 'Fill', hint: 'Click to pour water: ponds, streams, wetlands.' },
-  { tool: 'drain', label: 'Drain', hint: 'Click to drain water from lakes and marshes.' },
-  { tool: 'flood', label: 'Flood', hint: 'Click to flood the basin the cursor is over.' },
-  { tool: 'fire', label: 'Ignite', hint: 'Click dry fuel to start a fire. Wind decides where it goes.' },
+type ToolGroup = 'observe' | 'life' | 'land' | 'water' | 'fire';
+
+const TOOL_GROUPS: { id: ToolGroup; label: string }[] = [
+  { id: 'observe', label: 'Observe' },
+  { id: 'life', label: 'Life' },
+  { id: 'land', label: 'Land' },
+  { id: 'water', label: 'Water' },
+  { id: 'fire', label: 'Fire' },
+];
+
+const TOOLS: { tool: ToolKind; group: ToolGroup; label: string; hint: string }[] = [
+  { tool: 'inspect', group: 'observe', label: 'Inspect', hint: 'Click an animal to open its file. Drag to orbit, right-drag to pan.' },
+  { tool: 'spawn', group: 'life', label: 'Release', hint: 'Click land to release animals of the selected species.' },
+  { tool: 'plant', group: 'life', label: 'Sow', hint: 'Click to sow vegetation — grass, shrubs or reeds.' },
+  { tool: 'tree', group: 'life', label: 'Plant tree', hint: 'Click to plant a stand of trees.' },
+  { tool: 'raise', group: 'land', label: 'Raise', hint: 'Drag terrain up. Mountains change wind, rain and biomes.' },
+  { tool: 'lower', group: 'land', label: 'Lower', hint: 'Drag terrain down — dig valleys, expose groundwater.' },
+  { tool: 'flatten', group: 'land', label: 'Flatten', hint: 'Click to level the land under the cursor.' },
+  { tool: 'water', group: 'water', label: 'Fill', hint: 'Click to pour water: ponds, streams, wetlands.' },
+  { tool: 'drain', group: 'water', label: 'Drain', hint: 'Click to drain water from lakes and marshes.' },
+  { tool: 'flood', group: 'water', label: 'Flood', hint: 'Click to flood the basin the cursor is over.' },
+  { tool: 'fire', group: 'fire', label: 'Ignite', hint: 'Click dry fuel to start a fire. Wind decides where it goes.' },
+];
+
+const SPEEDS: { label: string; value: number }[] = [
+  { label: '❚❚', value: 0 },
+  { label: '1×', value: 1 },
+  { label: '2×', value: 2 },
+  { label: '5×', value: 5 },
+  { label: '10×', value: 10 },
+  { label: '25×', value: 25 },
+  { label: '50×', value: 50 },
+  { label: '100×', value: 100 },
+];
+
+const JUMPS: [string, 'hour' | 'day' | 'week' | 'month' | 'year', string][] = [
+  ['+1h', 'hour', 'Advance one hour'],
+  ['+1d', 'day', 'Advance one day'],
+  ['+1w', 'week', 'Advance one week'],
+  ['+1m', 'month', 'Advance thirty days'],
+  ['+1y', 'year', 'Advance one year'],
 ];
 
 export class HUD {
   private host: SimHost;
   private cb: HudCallbacks;
   private topbar: HTMLElement;
-  private bottombar: HTMLElement;
+  private dock: HTMLElement;
   private toasts: HTMLElement;
   private captions: HTMLElement;
   private modalLayer: HTMLElement;
   private hintEl!: HTMLElement;
-  private timeEl!: HTMLElement;
-  private clockEl!: HTMLElement;
-  private climateEl!: HTMLElement;
+  private nameInput!: HTMLInputElement;
+  private dateEl!: HTMLElement;
+  private seasonEl!: HTMLElement;
+  private weatherEl!: HTMLElement;
   private perfEl!: HTMLElement;
-  private minimap: Minimap;
   private speedButtons = new Map<number, HTMLButtonElement>();
   private toolButtons = new Map<ToolKind, HTMLButtonElement>();
+  private toolGroupButtons = new Map<ToolGroup, HTMLButtonElement>();
+  private toolGroupRow!: HTMLElement;
+  private toolRow!: HTMLElement;
+  private speciesSelect!: HTMLSelectElement;
   private cameraButtons = new Map<CameraMode, HTMLButtonElement>();
   private scaleButtons = new Map<ScaleLevel, HTMLButtonElement>();
   private toastNodes: HTMLElement[] = [];
   private toolRadius = 26;
   private toolStrength = 1;
+  private activeGroup: ToolGroup = 'observe';
   private lastCaptionsKey = '';
+  private minimap: Minimap;
 
   constructor(host: SimHost, cb: HudCallbacks) {
     this.host = host;
     this.cb = cb;
-    this.topbar = el('div', 'ui bar');
+    this.minimap = new Minimap();
+
+    this.topbar = el('header', 'hud-top ui');
     this.topbar.id = 'topbar';
-    this.bottombar = el('div', 'ui bar');
-    this.bottombar.id = 'bottombar';
-    this.toasts = el('div', 'ui');
+    this.dock = el('div', 'hud-dock ui');
+    this.dock.id = 'bottombar';
+    this.toasts = el('div', 'hud-toasts ui');
     this.toasts.id = 'toasts';
-    this.captions = el('div', 'ui');
+    this.captions = el('div', 'hud-captions ui');
     this.captions.id = 'captions';
-    this.modalLayer = el('div', 'ui');
+    this.modalLayer = el('div', 'hud-modal-layer ui');
     this.modalLayer.id = 'modal-layer';
     this.modalLayer.style.display = 'none';
-    document.body.append(this.topbar, this.bottombar, this.toasts, this.captions, this.modalLayer);
-    this.minimap = new Minimap();
+    document.body.append(this.topbar, this.dock, this.toasts, this.captions, this.modalLayer);
+
     this.buildTop();
-    this.buildBottom();
+    this.buildDock();
     this.trackBarHeights();
     host.onToast((text, kind) => this.toast(text, kind));
     host.onCaption((text, subject) => this.setCaption(text, subject));
   }
 
   /**
-   * Publish the real heights of the top and bottom bars as CSS variables so the
-   * side columns and toasts sit below/above them at any window size, wrap state
-   * or UI scale. Nothing in the layout assumes a fixed bar height.
+   * Publish the real heights of the top strip and dock as CSS variables so side
+   * columns, toasts and the minimap sit clear of them at any size or UI scale.
    */
   private trackBarHeights(): void {
     const root = document.documentElement;
     const apply = (): void => {
       root.style.setProperty('--topbar-h', `${Math.ceil(this.topbar.getBoundingClientRect().height)}px`);
-      root.style.setProperty('--bottombar-h', `${Math.ceil(this.bottombar.getBoundingClientRect().height)}px`);
+      root.style.setProperty('--bottombar-h', `${Math.ceil(this.dock.getBoundingClientRect().height)}px`);
     };
     apply();
     if (typeof ResizeObserver !== 'undefined') {
       new ResizeObserver(apply).observe(this.topbar);
-      new ResizeObserver(apply).observe(this.bottombar);
+      new ResizeObserver(apply).observe(this.dock);
     } else {
       window.addEventListener('resize', apply);
     }
   }
 
   /* ------------------------------------------------------------------ */
-  /* Top bar                                                             */
+  /* Top strip                                                           */
   /* ------------------------------------------------------------------ */
 
   private buildTop(): void {
     const world = this.host.world;
-    this.topbar.append(
-      span('label', 'World'),
-      (this.timeEl = span('value', world.name)),
-      sep(),
-      span('label', 'Seed'),
-      span('value', world.seed),
-      sep(),
-      (this.clockEl = span('value mono', '')),
-      (this.climateEl = span('value mono', '')),
-      sep(),
-      span('label', 'Speed'),
-    );
-    for (const option of [
-      { label: '❚❚', value: 0 },
-      { label: '1×', value: 1 },
-      { label: '2×', value: 2 },
-      { label: '5×', value: 5 },
-      { label: '10×', value: 10 },
-      { label: '25×', value: 25 },
-      { label: '50×', value: 50 },
-      { label: '100×', value: 100 },
-    ]) {
-      const b = button(option.label, 'btn mono', () => this.host.setSpeed(option.value));
-      b.title = option.value === 0 ? 'Pause (space)' : `Simulate at ${option.value}× real time`;
-      this.speedButtons.set(option.value, b);
-      this.topbar.append(b);
-    }
-    this.topbar.append(sep(), span('label', 'Jump'));
-    for (const [label, kind, title] of [
-      ['+1h', 'hour', 'Advance one hour'],
-      ['+1d', 'day', 'Advance one day'],
-      ['+1w', 'week', 'Advance one week'],
-      ['+1m', 'month', 'Advance thirty days'],
-      ['+1y', 'year', 'Advance one year'],
-    ] as const) {
-      const b = button(label, 'btn mono', () => this.host.jump(kind));
-      b.title = title;
-      this.topbar.append(b);
-    }
-    this.topbar.append(sep(), (this.perfEl = span('value mono', '')));
-    const grow = el('div', 'grow');
-    const world2 = this.host.world;
-    const nameInput = el('input') as HTMLInputElement;
+
+    // Identity: mark, product name, editable world name and seed.
+    const brand = el('div', 'hud-brand');
+    const mark = el('span', 'hud-mark');
+    mark.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M5 13c3-4 6 2 9-2s3 2 5 1" /></svg>';
+    const brandText = el('div', 'hud-brand-text');
+    brandText.append(span('hud-kicker', 'A Living Planet'));
+    const nameInput = el('input', 'hud-name') as HTMLInputElement;
+    this.nameInput = nameInput;
     nameInput.type = 'text';
-    nameInput.value = world2.name;
-    nameInput.style.width = '132px';
+    nameInput.value = world.name;
     nameInput.title = 'World name';
+    nameInput.setAttribute('aria-label', 'World name');
     nameInput.addEventListener('change', () => {
-      this.host.world.name = nameInput.value.trim() || world2.name;
-      this.timeEl.textContent = this.host.world.name;
+      this.host.world.name = nameInput.value.trim() || world.name;
+      nameInput.value = this.host.world.name;
       this.host.dirty = true;
     });
-    this.topbar.append(grow, nameInput, sep());
-    this.topbar.append(
-      button('Save', 'btn', () => this.cb.onSave()),
-      button('Worlds', 'btn', () => this.cb.onLibrary()),
-      button('New', 'btn', () => this.cb.onNewWorld()),
-      button('Observer', 'btn', () => this.cb.onDocumentary()),
-      button('Help', 'btn', () => this.cb.onHelp()),
+    const seed = span('hud-seed mono', `seed ${world.seed}`);
+    seed.title = 'World seed: the same seed always produces the same planet';
+    brandText.append(nameInput, seed);
+    brand.append(mark, brandText);
+
+    // Clock and weather: the read-out you glance at.
+    const clock = el('div', 'hud-clock');
+    const timeRow = el('div', 'hud-time-row');
+    this.dateEl = span('hud-date', '');
+    this.seasonEl = span('hud-season', '');
+    timeRow.append(this.dateEl, this.seasonEl);
+    this.perfEl = span('hud-time mono', '');
+    this.weatherEl = span('hud-weather', '');
+    clock.append(timeRow, this.perfEl, this.weatherEl);
+
+    // Speed and time jumps.
+    const speed = el('div', 'hud-group');
+    speed.append(span('hud-label', 'Speed'));
+    const speedSeg = el('div', 'hud-seg');
+    for (const option of SPEEDS) {
+      const b = button(option.label, 'hud-seg-btn mono', () => this.host.setSpeed(option.value));
+      b.title = option.value === 0 ? 'Pause (space)' : `Simulate at ${option.value}× real time`;
+      this.speedButtons.set(option.value, b);
+      speedSeg.append(b);
+    }
+    const jump = el('div', 'hud-group hud-jump');
+    jump.append(span('hud-label', 'Jump'));
+    const jumpSeg = el('div', 'hud-seg');
+    for (const [label, kind, title] of JUMPS) {
+      const b = button(label, 'hud-seg-btn mono', () => this.host.jump(kind));
+      b.title = title;
+      jumpSeg.append(b);
+    }
+    jump.append(jumpSeg);
+    speed.append(speedSeg);
+
+    // Panels, settings and file actions.
+    const actions = el('div', 'hud-actions');
+    actions.append(
+      iconButton('Panels', 'Show or hide the side panels (Tab)', () => this.cb.onTogglePanels(), ICON.panels),
+      iconButton('Observer', 'Documentary mode: quiet, captioned observation (D)', () => this.cb.onDocumentary(), ICON.eye),
+      iconButton('Settings', 'Settings', () => this.cb.onSettings(), ICON.gear),
+      iconButton('Help', 'Field manual (?)', () => this.cb.onHelp(), ICON.help),
     );
+    const files = el('div', 'hud-group hud-files');
+    files.append(
+      textButton('Save', 'Save this world', () => this.cb.onSave()),
+      textButton('Worlds', 'World library (L)', () => this.cb.onLibrary()),
+      textButton('New', 'Generate a new world', () => this.cb.onNewWorld()),
+    );
+
+    this.topbar.append(brand, clock, el('div', 'hud-spacer'), speed, jump, actions, files);
+    this.topbar.setAttribute('role', 'banner');
   }
 
   /* ------------------------------------------------------------------ */
-  /* Bottom bar                                                          */
+  /* Dock                                                                */
   /* ------------------------------------------------------------------ */
 
-  private buildBottom(): void {
-    const camRow = el('div', 'row tight');
-    camRow.append(span('label', 'Camera'));
+  private buildDock(): void {
+    const camGroup = el('div', 'hud-group');
+    camGroup.append(span('hud-label', 'Camera'));
+    const camSeg = el('div', 'hud-seg');
     for (const c of CAMERA_MODES) {
-      const b = button(c.label, 'btn', () => this.cb.onCameraMode(c.mode));
+      const b = button(c.label, 'hud-seg-btn', () => this.cb.onCameraMode(c.mode));
       b.title = `${c.label} camera (${c.key})`;
+      b.append(span('hud-key', c.key));
       this.cameraButtons.set(c.mode, b);
-      camRow.append(b);
+      camSeg.append(b);
     }
-    camRow.append(sep(), span('label', 'Scale'));
+    camGroup.append(camSeg);
+
+    const scaleGroup = el('div', 'hud-group');
+    scaleGroup.append(span('hud-label', 'Scale'));
+    const scaleSeg = el('div', 'hud-seg');
     for (const s of SCALE_LEVELS) {
-      const b = button(s.label, 'btn', () => this.cb.onScale(s.level));
+      const b = button(s.label, 'hud-seg-btn', () => this.cb.onScale(s.level));
       b.title = `${s.label} view`;
       this.scaleButtons.set(s.level, b);
-      camRow.append(b);
+      scaleSeg.append(b);
     }
+    scaleGroup.append(scaleSeg);
 
-    const toolRow = el('div', 'row tight wrap tools');
-    toolRow.append(span('label', 'Sandbox'));
-    for (const t of TOOLS) {
-      const b = button(t.label, 'btn tool', () => this.cb.onTool(t.tool));
-      b.title = t.hint;
-      this.toolButtons.set(t.tool, b);
-      toolRow.append(b);
+    // Sandbox: a category row, then the tools of the active category.
+    const sandbox = el('div', 'hud-sandbox');
+    this.toolGroupRow = el('div', 'hud-seg hud-groups');
+    for (const g of TOOL_GROUPS) {
+      const b = button(g.label, 'hud-seg-btn', () => this.showToolGroup(g.id));
+      this.toolGroupButtons.set(g.id, b);
+      this.toolGroupRow.append(b);
     }
-    // Species picker for the release tool.
-    const speciesSelect = el('select', 'btn mono') as HTMLSelectElement;
+    this.toolRow = el('div', 'hud-tools');
+
+    this.speciesSelect = el('select', 'hud-select') as HTMLSelectElement;
     for (const sp of SPECIES) {
       const opt = document.createElement('option');
       opt.value = sp.key;
       opt.textContent = sp.name;
-      speciesSelect.append(opt);
+      this.speciesSelect.append(opt);
     }
-    speciesSelect.value = this.host.spawnSpecies;
-    speciesSelect.title = 'Species released by the Release tool';
-    speciesSelect.addEventListener('change', () => (this.host.spawnSpecies = speciesSelect.value));
-    toolRow.append(speciesSelect);
-    toolRow.append(span('label', 'Radius'));
+    this.speciesSelect.value = this.host.spawnSpecies;
+    this.speciesSelect.title = 'Species released by the Release tool';
+    this.speciesSelect.setAttribute('aria-label', 'Species to release');
+    this.speciesSelect.addEventListener('change', () => (this.host.spawnSpecies = this.speciesSelect.value));
+
     const radius = input('range', '0', '120', '2', String(this.toolRadius));
     radius.title = 'Brush radius in metres';
-    radius.addEventListener('input', () => (this.toolRadius = Number(radius.value)));
-    toolRow.append(radius);
-    const radiusValue = span('value mono', `${this.toolRadius} m`);
-    radius.addEventListener('input', () => (radiusValue.textContent = `${this.toolRadius} m`));
-    toolRow.append(radiusValue);
-    toolRow.append(span('label', 'Force'));
+    const radiusValue = span('hud-value mono', `${this.toolRadius} m`);
+    radius.addEventListener('input', () => {
+      this.toolRadius = Number(radius.value);
+      radiusValue.textContent = `${this.toolRadius} m`;
+    });
     const strength = input('range', '0.2', '3', '0.1', String(this.toolStrength));
     strength.title = 'Tool strength';
-    strength.addEventListener('input', () => (this.toolStrength = Number(strength.value)));
-    toolRow.append(strength);
+    const strengthValue = span('hud-value mono', this.toolStrength.toFixed(1));
+    strength.addEventListener('input', () => {
+      this.toolStrength = Number(strength.value);
+      strengthValue.textContent = this.toolStrength.toFixed(1);
+    });
+    const brush = el('div', 'hud-brush');
+    brush.append(
+      labelled('Radius', radius, radiusValue),
+      labelled('Force', strength, strengthValue),
+    );
+    const sandboxRow = el('div', 'hud-sandbox-row');
+    sandboxRow.append(this.toolGroupRow, this.speciesSelect, brush);
+    sandbox.append(sandboxRow, this.toolRow);
 
-    this.hintEl = el('div', 'hint dim small');
-    this.hintEl.textContent = TOOLS[0].hint;
-    this.bottombar.append(camRow, toolRow, this.hintEl);
+    this.hintEl = el('div', 'hud-hint');
+    const dockBody = el('div', 'hud-dock-body');
+    dockBody.append(camGroup, scaleGroup, sandbox);
+    this.dock.append(this.hintEl, dockBody);
+    this.showToolGroup('observe');
     this.setTool('inspect');
   }
+
+  private showToolGroup(group: ToolGroup): void {
+    this.activeGroup = group;
+    for (const [g, b] of this.toolGroupButtons) b.classList.toggle('on', g === group);
+    this.toolRow.replaceChildren();
+    for (const t of TOOLS.filter((x) => x.group === group)) {
+      const b = button(t.label, 'hud-tool', () => this.cb.onTool(t.tool));
+      b.title = t.hint;
+      this.toolButtons.set(t.tool, b);
+      this.toolRow.append(b);
+    }
+    this.speciesSelect.hidden = group !== 'life';
+    this.setTool(this.host.tool as ToolKind);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Live state                                                          */
+  /* ------------------------------------------------------------------ */
 
   get brushRadius(): number {
     return this.toolRadius;
@@ -259,23 +351,20 @@ export class HUD {
     return this.toolStrength;
   }
 
-  /* ------------------------------------------------------------------ */
-  /* State display                                                       */
-  /* ------------------------------------------------------------------ */
-
   update(renderer: WorldRenderer): void {
     const world = this.host.world;
     const clock = world.clock;
     const hour = Math.floor(clock.hour);
     const minute = Math.floor((clock.hour % 1) * 60);
-    this.timeEl.textContent = world.name;
-    this.clockEl.textContent = `Y${clock.year} D${String(clock.dayOfYear + 1).padStart(3, '0')} ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} ${SEASON_NAMES[clock.seasonIndex]}`;
+    if (document.activeElement !== this.nameInput) this.nameInput.value = world.name;
+    this.dateEl.textContent = `Year ${clock.year} · Day ${clock.dayOfYear + 1}`;
+    this.seasonEl.textContent = `${SEASON_NAMES[clock.seasonIndex]} · ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
     const climate = world.climate;
     const weather = climate.state.charAt(0).toUpperCase() + climate.state.slice(1);
-    this.climateEl.textContent = `${weather} ${Math.round(climate.temperatureAt(0, 0))}°C ${Math.round(climate.windSpeed)}m/s`;
+    this.weatherEl.textContent = `${weather} · ${Math.round(climate.temperatureAt(0, 0))}°C · wind ${Math.round(climate.windSpeed)} m/s`;
     this.minimap.update(world, renderer.rig.focus, renderer.rig.yaw);
     const stats = renderer.stats;
-    this.perfEl.textContent = `${stats.fps} fps · ${world.stats.simMs.toFixed(1)} ms sim · ${world.stats.creatures} animals`;
+    this.perfEl.textContent = `${stats.fps} fps · ${world.stats.simMs.toFixed(1)} ms · ${world.stats.creatures} animals`;
     for (const [value, b] of this.speedButtons) {
       const on = value === 0 ? clock.paused : !clock.paused && clock.speedIndex === TIME.speedSteps.indexOf(value as never);
       b.classList.toggle('on', on);
@@ -294,7 +383,10 @@ export class HUD {
     this.host.tool = tool;
     for (const [t, b] of this.toolButtons) b.classList.toggle('on', t === tool);
     const found = TOOLS.find((t) => t.tool === tool);
-    if (found) this.hintEl.textContent = found.hint;
+    if (found) {
+      this.hintEl.textContent = found.hint;
+      if (found.group !== this.activeGroup) this.showToolGroup(found.group);
+    }
   }
 
   setDocumentary(on: boolean): void {
@@ -307,18 +399,17 @@ export class HUD {
   /* ------------------------------------------------------------------ */
 
   toast(text: string, kind?: string): void {
-    if (kind === 'extinct' || kind === 'disaster') {
-      // Big events also land in the event log, so keep the toast brief.
-    }
-    const node = el('div', `toast ${kind ?? ''}`);
-    node.textContent = text;
+    const node = el('div', `hud-toast ${kind ?? ''}`);
+    const dot = el('span', 'hud-toast-dot');
+    const msg = el('span', 'hud-toast-text');
+    msg.textContent = text;
+    node.append(dot, msg);
     this.toasts.append(node);
     this.toastNodes.push(node);
     while (this.toastNodes.length > 4) this.toastNodes.shift()?.remove();
     const ms = kind === 'extinct' || kind === 'disaster' ? 7000 : 4200;
     setTimeout(() => {
-      node.style.transition = 'opacity 0.4s ease';
-      node.style.opacity = '0';
+      node.classList.add('leaving');
       setTimeout(() => {
         node.remove();
         const i = this.toastNodes.indexOf(node);
@@ -331,9 +422,9 @@ export class HUD {
     const key = `${subject}|${text}`;
     if (key === this.lastCaptionsKey) return;
     this.lastCaptionsKey = key;
-    const node = el('div', 'caption');
+    const node = el('div', 'hud-caption');
     if (subject) {
-      const who = el('span', 'who');
+      const who = el('span', 'hud-caption-who');
       who.textContent = SPECIES.find((s) => s.key === subject)?.name ?? subject;
       node.append(who);
     }
@@ -350,33 +441,34 @@ export class HUD {
   /* ------------------------------------------------------------------ */
 
   showModal(opts: { title: string; body: HTMLElement; actions?: { label: string; run: () => void; primary?: boolean }[]; onClose?: () => void }): void {
-    const modal = el('div', 'modal');
-    const header = el('header');
+    const modal = el('div', 'hud-modal');
+    const header = el('header', 'hud-modal-head');
     const h1 = document.createElement('h1');
     h1.textContent = opts.title;
     header.append(h1);
-    const body = el('div', 'body');
+    const close = iconButton('Close', 'Close (Esc)', () => this.closeModal(), ICON.close);
+    close.classList.add('hud-modal-close');
+    header.append(close);
+    const body = el('div', 'hud-modal-body');
     body.append(opts.body);
-    const footer = el('footer');
+    const footer = el('footer', 'hud-modal-foot');
     for (const a of opts.actions ?? []) {
-      const b = button(a.label, `btn${a.primary ? ' on' : ''}`, () => {
-        a.run();
-      });
-      footer.append(b);
+      footer.append(button(a.label, `hud-btn${a.primary ? ' primary' : ''}`, () => a.run()));
     }
-    const close = button('Close', 'btn ghost', () => this.closeModal());
-    footer.append(close);
+    footer.append(button('Close', 'hud-btn ghost', () => this.closeModal()));
     modal.append(header, body, footer);
     this.modalLayer.replaceChildren(modal);
     this.modalLayer.style.display = 'flex';
     this.modalLayer.dataset.hasModal = '1';
     (footer.querySelector('button') as HTMLButtonElement | null)?.focus();
-    this.modalEsc = () => this.closeModal();
+    this.modalEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') this.closeModal();
+    };
     document.addEventListener('keydown', this.modalEsc);
     this.onClose = opts.onClose ?? null;
   }
 
-  private modalEsc: (() => void) | null = null;
+  private modalEsc: ((e: KeyboardEvent) => void) | null = null;
   private onClose: (() => void) | null = null;
 
   closeModal(): void {
@@ -415,7 +507,7 @@ export class HUD {
       ['F G C O V', 'Free, Follow, Cinematic, Overhead, Close cameras'],
       ['P', 'Cycle Planet → Region → Local → Organism views'],
       ['D', 'Documentary mode: quiet, captioned observation'],
-      ['Tab', 'Show or hide the instrument panels'],
+      ['Tab', 'Show or hide the side panels'],
       ['L', 'World library (save, load, export)'],
       ['?', 'This panel'],
     ];
@@ -523,8 +615,8 @@ export class HUD {
     const seed = el('input') as HTMLInputElement;
     seed.type = 'text';
     seed.value = randomSeed();
-    const regenerate = button('Regenerate', 'btn', () => (seed.value = randomSeed()));
-    const seedWrap = el('div', 'row');
+    const regenerate = button('Regenerate', 'hud-btn', () => (seed.value = randomSeed()));
+    const seedWrap = el('div', 'hud-inline');
     seedWrap.append(seed, regenerate);
     seedRow.append(seedLabel, seedWrap);
     const qualityRow = el('div', 'field');
@@ -553,6 +645,35 @@ export class HUD {
 }
 
 /* ------------------------------------------------------------------ */
+/* Icons (inline SVG, stroke-based, 16px grid)                         */
+/* ------------------------------------------------------------------ */
+
+const ICON = {
+  panels: '<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M6.5 3v10"/>',
+  eye: '<path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
+  gear: '<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.7M8 12.5v1.7M1.8 8h1.7M12.5 8h1.7M3.6 3.6l1.2 1.2M11.2 11.2l1.2 1.2M3.6 12.4l1.2-1.2M11.2 4.8l1.2-1.2"/>',
+  help: '<circle cx="8" cy="8" r="6"/><path d="M6.2 6.3a1.8 1.8 0 1 1 2.5 1.6c-.5.3-.7.6-.7 1.2M8 11.6v.1"/>',
+  close: '<path d="M4 4l8 8M12 4l-8 8"/>',
+};
+
+function iconButton(label: string, title: string, onClick: () => void, path: string): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'hud-icon';
+  b.title = title;
+  b.setAttribute('aria-label', label);
+  b.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true">${path}</svg><span>${label}</span>`;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function textButton(label: string, title: string, onClick: () => void): HTMLButtonElement {
+  const b = button(label, 'hud-btn', onClick);
+  b.title = title;
+  return b;
+}
+
+/* ------------------------------------------------------------------ */
 /* Small DOM helpers                                                   */
 /* ------------------------------------------------------------------ */
 
@@ -568,10 +689,6 @@ function span(className: string, text: string): HTMLElement {
   return node;
 }
 
-function sep(): HTMLElement {
-  return el('div', 'sep');
-}
-
 function button(label: string, className: string, onClick: () => void): HTMLButtonElement {
   const b = document.createElement('button');
   b.className = className;
@@ -579,6 +696,12 @@ function button(label: string, className: string, onClick: () => void): HTMLButt
   b.type = 'button';
   b.addEventListener('click', onClick);
   return b;
+}
+
+function labelled(text: string, control: HTMLElement, value: HTMLElement): HTMLElement {
+  const wrap = el('label', 'hud-slider');
+  wrap.append(span('hud-label', text), control, value);
+  return wrap;
 }
 
 function input(type: string, min: string, max: string, step: string, value: string): HTMLInputElement {

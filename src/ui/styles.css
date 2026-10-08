@@ -86,37 +86,6 @@ textarea {
   pointer-events: auto;
 }
 
-/* ------------------------------------------------------------------ */
-/* Chrome                                                             */
-/* ------------------------------------------------------------------ */
-
-.bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: var(--panel-solid);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 6px 10px;
-  box-shadow: var(--shadow);
-}
-
-#topbar {
-  left: 10px;
-  right: 10px;
-  top: 10px;
-  flex-wrap: wrap;
-  row-gap: 6px;
-}
-
-#bottombar {
-  left: 10px;
-  right: 10px;
-  bottom: 10px;
-  flex-wrap: wrap;
-  row-gap: 8px;
-}
-
 #leftcol {
   left: 10px;
   top: var(--col-top);
@@ -135,17 +104,6 @@ textarea {
   flex-direction: column;
   gap: 8px;
   max-height: var(--col-max-h);
-}
-
-#toasts {
-  right: 10px;
-  top: var(--col-top);
-  width: 372px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  z-index: 30;
-  pointer-events: none !important;
 }
 
 .panel {
@@ -680,128 +638,6 @@ canvas.chart {
   margin-right: 4px;
 }
 
-/* ------------------------------------------------------------------ */
-/* Toasts, captions, modals                                            */
-/* ------------------------------------------------------------------ */
-
-.toast {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-left: 2px solid var(--accent);
-  border-radius: var(--radius);
-  padding: 6px 9px;
-  box-shadow: var(--shadow);
-  font-size: 0.9em;
-  pointer-events: none;
-  animation: toast-in 0.18s ease-out;
-}
-
-.toast.discovery {
-  border-left-color: var(--good);
-}
-
-.toast.extinct {
-  border-left-color: var(--bad);
-}
-
-.toast .x {
-  color: var(--text-dim);
-}
-
-@keyframes toast-in {
-  from {
-    opacity: 0;
-    transform: translateX(10px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-#captions {
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: 86px;
-  width: min(720px, 68vw);
-  text-align: center;
-  z-index: 20;
-}
-
-.caption {
-  display: inline-block;
-  background: rgba(12, 15, 18, 0.72);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius);
-  padding: 8px 14px;
-  font-size: 1.02em;
-  letter-spacing: 0.01em;
-  color: #efe9dc;
-  animation: toast-in 0.2s ease-out;
-}
-
-.caption .who {
-  display: block;
-  color: var(--accent);
-  font-size: 0.74em;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  margin-bottom: 3px;
-}
-
-#modal-layer {
-  position: absolute;
-  inset: 0;
-  background: rgba(6, 8, 10, 0.72);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 60;
-  pointer-events: auto;
-}
-
-.modal {
-  width: min(760px, 92vw);
-  max-height: 86vh;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  box-shadow: var(--shadow);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.modal header {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--line-soft);
-  background: var(--panel-2);
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-
-.modal header h1 {
-  margin: 0;
-  font-size: 1.1em;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.modal .body {
-  padding: 14px 16px;
-  overflow-y: auto;
-}
-
-.modal footer {
-  padding: 10px 16px;
-  border-top: 1px solid var(--line-soft);
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  background: var(--panel-2);
-}
-
 .field {
   display: grid;
   grid-template-columns: 150px 1fr;
@@ -829,31 +665,6 @@ canvas.chart {
 
 .world-card.on {
   border-color: var(--accent-dim);
-}
-
-/* ------------------------------------------------------------------ */
-/* Documentary mode                                                    */
-/* ------------------------------------------------------------------ */
-
-body.documentary #leftcol,
-body.documentary #rightcol,
-body.documentary #bottombar .tools,
-body.documentary #bottombar .hint,
-body.documentary #toasts {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.6s ease;
-}
-
-body.documentary #topbar,
-body.documentary #bottombar {
-  opacity: 0.22;
-  transition: opacity 0.6s ease;
-}
-
-body.documentary #topbar:hover,
-body.documentary #bottombar:hover {
-  opacity: 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -913,8 +724,7 @@ body.high-contrast {
 
   #rightcol {
     width: min(360px, 46vw);
-  }
-}
+  }}
 
 @media (max-width: 720px) {
   #rightcol {
@@ -924,54 +734,17 @@ body.high-contrast {
     top: auto;
     bottom: calc(var(--bottombar-h) + 8px);
     max-height: 46vh;
-  }
-
-  #toasts {
-    left: 10px;
-    width: auto;
-  }
-
-  #captions {
-    width: 92vw;
-    bottom: 46vh;
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* Minimap and compass                                                 */
-/* ------------------------------------------------------------------ */
-
-#minimap {
-  left: 10px;
-  bottom: calc(var(--bottombar-h) + 14px);
-  width: 160px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  pointer-events: none;
-}
-
-#minimap .minimap-canvas {
-  width: 160px;
-  height: 160px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  background: #0c1014;
-}
-
-#minimap .minimap-compass,
-#minimap .minimap-coords {
-  align-self: flex-start;
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: rgba(12, 16, 20, 0.7);
-  color: var(--text, #e8e2d0);
-}
+  }}
 
 @media (max-width: 720px) {
   #minimap {
     display: none;
-  }
+  }}
+
+/* Documentary mode hides the side panels; the HUD dims itself in hud.css. */
+body.documentary #leftcol,
+body.documentary #rightcol {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.6s ease;
 }
