@@ -42,6 +42,10 @@ jobs:
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          # Turn Pages on for this repository if it is not already, so the first
+          # run of this workflow is enough to publish the site.
+          enablement: true
 
       - name: Upload the site
         uses: actions/upload-pages-artifact@v3
