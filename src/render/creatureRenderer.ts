@@ -232,6 +232,91 @@ function addQuadrupedSignature(
 }
 
 /**
+ * Deer, built by hand: a slender barrel body, a long neck carrying a narrow
+ * head, large ears, a branched antler pair, long slender legs with fine feet,
+ * a pale rump patch and a short tail.
+ */
+function buildDeer(m: Morphology, detail: boolean): THREE.BufferGeometry {
+  const L = m.bodyLength;
+  const G = m.bodyGirth;
+  const S = m.standHeight;
+  const H = m.headSize;
+  const pieces: Piece[] = [];
+  const add = (geo: THREE.BufferGeometry, part: number, pivot: THREE.Vector3, color: [number, number, number]) => {
+    pieces.push({ geo: tag(geo, part, pivot), part, pivot: pivot.clone(), color });
+  };
+  const seg = detail ? 18 : 6;
+  const origin = new THREE.Vector3();
+  const sph = (rx: number, ry: number, rz: number, x: number, y: number, z: number, color: [number, number, number], seed: number, part = PART.body, pivot = origin) => {
+    const g = paint(bodyGeo(rx, ry, rz, seg), color, 0.05, seed);
+    g.translate(x, y, z);
+    add(g, part, pivot, color);
+  };
+
+  // Barrel body, slightly deeper at the chest.
+  sph(L * 0.42, G * 0.5, G * 0.52, 0, S, 0, m.fur, 3);
+  sph(L * 0.22, G * 0.46, G * 0.5, L * 0.22, S - G * 0.02, 0, m.fur, 5);
+  sph(L * 0.3, G * 0.28, G * 0.36, L * 0.02, S - G * 0.3, 0, m.belly, 7);
+  // Pale rump patch.
+  sph(L * 0.12, G * 0.36, G * 0.5, -L * 0.42, S + G * 0.02, 0, [0.93, 0.91, 0.85], 9);
+
+  // Long neck and narrow head.
+  const neckPivot = new THREE.Vector3(L * 0.36, S + G * 0.2, 0);
+  const headC = new THREE.Vector3(L * 0.66, S + G * 0.85, 0);
+  add(tube(neckPivot, headC, G * 0.36, H * 0.48, detail ? 14 : 6), PART.head, neckPivot, m.fur);
+  sph(H * 0.85, H * 0.5, H * 0.5, headC.x, headC.y, 0, m.fur, 13, PART.head, neckPivot);
+  sph(H * 0.9, H * 0.42, H * 0.4, headC.x + H * 0.55, headC.y - H * 0.18, 0, m.fur, 15, PART.head, neckPivot);
+  sph(H * 0.32, H * 0.28, H * 0.3, headC.x + H * 1.1, headC.y - H * 0.25, 0, m.accent, 17, PART.head, neckPivot);
+  if (detail) {
+    for (const side of [-1, 1]) {
+      sph(H * 0.12, H * 0.12, H * 0.12, headC.x + H * 0.2, headC.y + H * 0.22, side * H * 0.42, m.eye, 19, PART.head, neckPivot);
+    }
+  }
+
+  // Large ears that flare sideways from the back of the head.
+  for (const side of [-1, 1]) {
+    const part = side < 0 ? PART.earL : PART.earR;
+    const base = new THREE.Vector3(headC.x - H * 0.25, headC.y + H * 0.15, side * H * 0.35);
+    const ear = paint(bodyGeo(H * 0.14, H * 0.55, H * 0.45, detail ? 10 : 5), m.fur, 0.05, 21 + side);
+    ear.rotateZ(side * 0.5);
+    ear.translate(base.x, base.y + H * 0.1, base.z + side * H * 0.35);
+    add(ear, part, base, m.fur);
+  }
+
+  // Antlers: a beam with two tines on each side.
+  if (detail) {
+    for (const side of [-1, 1]) {
+      const root = new THREE.Vector3(headC.x - H * 0.2, headC.y + H * 0.45, side * H * 0.22);
+      const tip = new THREE.Vector3(root.x - H * 0.3, root.y + H * 2.0, side * H * 0.5);
+      add(tube(root, tip, H * 0.12, H * 0.07, 6), PART.head, neckPivot, m.accent);
+      for (const t of [0.45, 0.7]) {
+        const at = new THREE.Vector3().lerpVectors(root, tip, t);
+        const tine = new THREE.Vector3(at.x + H * 0.55, at.y + H * 0.45, at.z + side * H * 0.12);
+        add(tube(at, tine, H * 0.06, H * 0.03, 5), PART.head, neckPivot, m.accent);
+      }
+    }
+  }
+
+  // Legs: long and slender, from shoulder and hip to small hooves.
+  for (const side of [-1, 1]) {
+    const shoulder = new THREE.Vector3(L * 0.32, S - G * 0.3, side * G * 0.36);
+    const hoof = new THREE.Vector3(L * 0.34, 0.02, side * G * 0.36);
+    add(mergeRaw([legGeo(shoulder.clone(), hoof.clone(), G * 0.1, 3, detail ? 10 : 5)]), side < 0 ? PART.legFL : PART.legFR, shoulder, m.accent);
+    const hip = new THREE.Vector3(-L * 0.3, S - G * 0.3, side * G * 0.36);
+    const hindHoof = new THREE.Vector3(-L * 0.32, 0.02, side * G * 0.36);
+    add(mergeRaw([legGeo(hip.clone(), hindHoof.clone(), G * 0.1, 3, detail ? 10 : 5)]), side < 0 ? PART.legRL : PART.legRR, hip, m.accent);
+  }
+
+  // Short tail.
+  const tailPivot = new THREE.Vector3(-L * 0.5, S + G * 0.3, 0);
+  sph(G * 0.12, G * 0.14, G * 0.12, -L * 0.52, S + G * 0.24, 0, m.belly, 41, PART.tail, tailPivot);
+
+  const merged = mergePieces(pieces);
+  applyPattern(merged, m);
+  return merged;
+}
+
+/**
  * Rabbit, built by hand rather than from the shared quadruped template: a
  * haunched rump, a short neck, a muzzle with a pink nose, long ears with pale
  * insides, folded forelegs, long hind feet and a white scut.
@@ -324,6 +409,7 @@ function buildRabbit(m: Morphology, detail: boolean): THREE.BufferGeometry {
 
 export function buildQuadruped(m: Morphology, detail: boolean, key?: string): THREE.BufferGeometry {
   if (key === 'rabbit') return buildRabbit(m, detail);
+  if (key === 'deer') return buildDeer(m, detail);
   const pieces: Piece[] = [];
   const stand = m.standHeight;
   const bl = m.bodyLength;
