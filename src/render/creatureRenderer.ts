@@ -1316,12 +1316,12 @@ export class CreatureRenderer {
     this.skinned.load();
     // Hand-built species get a procedural rig from their own mesh, so their
     // close-ups are animated like the fox.
-    for (const key of ['rabbit', 'deer', 'wolf', 'lynx'] as const) {
+    for (const key of ['rabbit', 'deer', 'wolf', 'lynx', 'bison'] as const) {
       const sp = SPECIES.find((x) => x.key === key);
       if (!sp) continue;
       // Generated smooth mesh (tools/animal_models); fall back to the hand-built one.
       const fallback = () => {
-        const build = key === 'rabbit' ? buildRabbit : key === 'deer' ? buildDeer : key === 'wolf' ? buildWolf : buildLynx;
+        const build = key === 'rabbit' ? buildRabbit : key === 'deer' ? buildDeer : key === 'wolf' ? buildWolf : key === 'lynx' ? buildLynx : (mm: Morphology, d: boolean) => buildQuadruped(mm, d, key);
         const rig = buildRiggedAnimal(build(sp.morphology, true), sp.morphology.standHeight, key === 'rabbit');
         this.skinned.addRigged(key, rig.scene, rig.animations);
       };
