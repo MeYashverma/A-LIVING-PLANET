@@ -57,7 +57,7 @@ export class TerrainMesh {
   private plantAttr: THREE.BufferAttribute;
   private aoAttr: THREE.BufferAttribute;
   private groundUniforms: SplatUniforms;
-  private waterTex: THREE.DataTexture | null = null;
+  private waterAttr!: THREE.BufferAttribute;
   private flowTex: THREE.DataTexture | null = null;
   private uniforms: WaterUniforms;
   private lastRefresh = -1e9;
@@ -82,6 +82,7 @@ export class TerrainMesh {
     this.aoAttr = new THREE.BufferAttribute(new Float32Array(verts), 1);
     this.splatA = new THREE.BufferAttribute(new Float32Array(verts * 4), 4);
     this.splatB = new THREE.BufferAttribute(new Float32Array(verts * 4), 4);
+    this.waterAttr = new THREE.BufferAttribute(new Float32Array(verts * 2), 2);
 
     const spacing = this.step * t.cellUnits;
     const origin = -t.half;
@@ -118,6 +119,7 @@ export class TerrainMesh {
     this.geo.setAttribute('aAO', this.aoAttr);
     this.geo.setAttribute('aSplatA', this.splatA);
     this.geo.setAttribute('aSplatB', this.splatB);
+    this.geo.setAttribute('aWater', this.waterAttr);
     this.geo.setIndex(new THREE.BufferAttribute(indices, 1));
 
     const { material, uniforms } = createGroundMaterial(
@@ -487,8 +489,6 @@ export class TerrainMesh {
     const d = t.waterDepth.data;
     const surf = new Float32Array(n * n);
     const wet = new Uint8Array(n * n);
-    let lo = Infinity;
-    let hi = -Infinity;
     for (let i = 0; i < n * n; i++) {
       let s = 0;
       if (h[i] < sea) {
@@ -500,38 +500,20 @@ export class TerrainMesh {
       }
       if (wet[i]) {
         surf[i] = s;
-        if (s < lo) lo = s;
-        if (s > hi) hi = s;
       }
     }
-    if (!(hi > lo)) {
-      lo = 0;
-      hi = 1;
-    }
-    const bytes = new Uint8Array(n * n * 4);
-    const span = hi - lo;
-    for (let i = 0; i < n * n; i++) {
-      bytes[i * 4] = wet[i] ? 255 : 0;
-      bytes[i * 4 + 1] = wet[i] ? Math.round(((surf[i] - lo) / span) * 255) : 0;
-      bytes[i * 4 + 3] = 255;
-    }
-    if (!this.waterTex) {
-      this.waterTex = new THREE.DataTexture(bytes, n, n, THREE.RGBAFormat, THREE.UnsignedByteType);
-      this.waterTex.magFilter = THREE.LinearFilter;
-      this.waterTex.minFilter = THREE.LinearFilter;
-      this.waterTex.wrapS = THREE.ClampToEdgeWrapping;
-      this.waterTex.wrapT = THREE.ClampToEdgeWrapping;
-      this.waterTex.generateMipmaps = false;
-    } else {
-      this.waterTex.image = { data: bytes, width: n, height: n };
-    }
-    this.waterTex.needsUpdate = true;
     this.updateFlow(wet, h);
-    const g = this.groundUniforms;
-    g.uWaterTex.value = this.waterTex;
-    g.uWaterYMin.value = lo;
-    g.uWaterYMax.value = hi;
-    g.uWaterHalf.value = t.half;
+    // Per-vertex copy for the ground shader, using the same vertex-to-cell map as
+    // the terrain build. A vertex attribute costs no texture unit.
+    for (let j = 0; j < this.res; j++) {
+      for (let i = 0; i < this.res; i++) {
+        const cx = Math.min(i * this.step, t.last);
+        const cy = Math.min(j * this.step, t.last);
+        const c = cy * n + cx;
+        this.waterAttr.setXY(j * this.res + i, wet[c], surf[c]);
+      }
+    }
+    this.waterAttr.needsUpdate = true;
   }
 
   /** Downhill direction and steepness per cell, for the water surface shader. */

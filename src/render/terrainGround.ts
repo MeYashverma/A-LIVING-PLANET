@@ -61,12 +61,6 @@ const TRIPLANAR_NORMAL = /* glsl */ `
   }
 `;
 
-function blankWaterTexture(): THREE.DataTexture {
-  const tex = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
-  tex.needsUpdate = true;
-  return tex;
-}
-
 export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boolean }): {
   material: THREE.MeshStandardMaterial;
   uniforms: SplatUniforms;
@@ -75,12 +69,6 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
     uTime: { value: 0 },
     uWind: { value: new THREE.Vector2(0, 0) },
     uAsh: { value: 0 },
-    // Per-cell water surface: R = wet flag, G = surface height scaled between
-    // uWaterYMin and uWaterYMax. Set by the terrain mesh whenever water changes.
-    uWaterTex: { value: blankWaterTexture() },
-    uWaterYMin: { value: 0 },
-    uWaterYMax: { value: 1 },
-    uWaterHalf: { value: 1 },
     // World units per texture tile. Small values tile more often; the macro
     // noise is what stops that reading as a repeating pattern.
     uScale: { value: 0.075 },
@@ -119,12 +107,16 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
         attribute float aAO;
         attribute vec4 aSplatA;
         attribute vec4 aSplatB;
+        // Per-vertex water: x = wet (0 or 1), y = water surface height in world units.
+        attribute vec2 aWater;
+        varying vec2 vWater;
         varying vec3 vPlant;
         varying float vAO;
         varying vec3 vWorld;
         varying vec3 vWNormal;
         varying vec4 vSplatA;
         varying vec4 vSplatB;
+        varying vec2 vWater;
       `,
       )
       .replace(
@@ -141,6 +133,7 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
         vWNormal = normalize(mat3(modelMatrix) * normal);
         vSplatA = aSplatA;
         vSplatB = aSplatB;
+        vWater = aWater;
       `,
       );
 
@@ -155,6 +148,7 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
         varying vec3 vWNormal;
         varying vec4 vSplatA;
         varying vec4 vSplatB;
+        varying vec2 vWater;
         uniform float uTime;
         uniform float uScale;
         uniform float uNormalStrength;
@@ -162,10 +156,6 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
         uniform float uExposure;
         uniform float uAsh;
         uniform vec2 uWind;
-        uniform sampler2D uWaterTex;
-        uniform float uWaterYMin;
-        uniform float uWaterYMax;
-        uniform float uWaterHalf;
         ${CORE.map((n) => `uniform sampler2D ${n}C;\nuniform sampler2D ${n}N;\nuniform sampler2D ${n}R;`).join('\n')}
         ${TINT.map((n) => `uniform sampler2D ${n}C;`).join('\n')}
 
@@ -256,9 +246,8 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
 
           // Water surface under this fragment (sea or lake), from the per-cell
           // texture. Land far from water has wet = 0 and gets no shore or caustics.
-          vec4 wz = texture2D(uWaterTex, (vWorld.xz + uWaterHalf) / (2.0 * uWaterHalf));
-          float wet = wz.r;
-          float surfY = mix(uWaterYMin, uWaterYMax, wz.g);
+          float wet = vWater.x;
+          float surfY = vWater.y;
 
           // Shoreline: the band just above and below the water surface is wet,
           // silty and darker, so land meets water without a hard line.
@@ -334,7 +323,7 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
       );
     }
   };
-  material.customProgramCacheKey = () => `terrain-ground-v4-${opts.triplanar ? 'tri' : 'planar'}`;
+  material.customProgramCacheKey = () => `terrain-ground-v5-${opts.triplanar ? 'tri' : 'planar'}`;
 
   return { material, uniforms };
 }
