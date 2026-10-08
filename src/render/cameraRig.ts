@@ -225,7 +225,10 @@ export class CameraRig {
   }
 
   zoom(delta: number, world: World): void {
-    this.targetDistance = clamp(this.targetDistance * Math.pow(1.0016, delta), 3.5, 1400);
+    // Exponential step: one wheel notch (delta ~0.25) is about a 28% change in
+    // distance. The old 1.0016^delta form changed distance by ~0.04% per notch,
+    // so the wheel did almost nothing.
+    this.targetDistance = clamp(this.targetDistance * Math.exp(delta), 3.5, 1400);
     const limit = world.terrain.half * 0.95;
     this.targetFocus.x = clamp(this.targetFocus.x, -limit, limit);
     this.targetFocus.z = clamp(this.targetFocus.z, -limit, limit);

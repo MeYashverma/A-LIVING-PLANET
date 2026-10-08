@@ -544,8 +544,8 @@ export class Terrain {
     for (let i = 0; i < h.length; i++) {
       const rel = h[i] - sl0;
       if (rel <= 0) continue;
-      const r = Math.min(rel, PIVOT * 1.9);
-      h[i] = sl0 + Math.pow(r, EXP) / Math.pow(PIVOT, EXP - 1);
+      // No cap here: a cap flattened every summit above it into a plateau.
+      h[i] = sl0 + Math.pow(rel, EXP) / Math.pow(PIVOT, EXP - 1);
     }
 
     // Relief floor: every world should have some high ground, even when the
@@ -598,7 +598,14 @@ export class Terrain {
     }
 
     // Keep everything in a sane range.
-    this.height.clampAll(0.02, 1.25);
+    // Soft shoulder instead of a hard ceiling: summits keep their curvature.
+    // A hard clamp at 1.25 cut every peak off flat, which read as mesas.
+    const SHOULDER = 0.9;
+    const SCALE = 0.7;
+    for (let i = 0; i < h.length; i++) {
+      if (h[i] > SHOULDER) h[i] = SHOULDER + SCALE * Math.tanh((h[i] - SHOULDER) / SCALE);
+    }
+    this.height.clampAll(0.02, 1.6);
     this.computeSlope();
   }
 
