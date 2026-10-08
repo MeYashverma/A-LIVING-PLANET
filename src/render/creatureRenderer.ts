@@ -124,8 +124,8 @@ function bodyGeo(rx: number, ry: number, rz: number, seg = 8): THREE.BufferGeome
   return g;
 }
 
-function legGeo(from: THREE.Vector3, to: THREE.Vector3, thickness: number, segments = 2): THREE.BufferGeometry {
-  const g = new THREE.CylinderGeometry(thickness * 0.75, thickness * 0.5, 1, 5, segments);
+function legGeo(from: THREE.Vector3, to: THREE.Vector3, thickness: number, segments = 2, radial = 5): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(thickness * 0.75, thickness * 0.5, 1, radial, segments);
   const dir = new THREE.Vector3().subVectors(to, from);
   const len = dir.length();
   g.translate(0, 0.5, 0);
@@ -134,7 +134,7 @@ function legGeo(from: THREE.Vector3, to: THREE.Vector3, thickness: number, segme
   g.applyQuaternion(q);
   g.translate(from.x, from.y, from.z);
   // A hoof/foot pad.
-  const foot = new THREE.SphereGeometry(thickness * 0.75, 5, 3);
+  const foot = new THREE.SphereGeometry(thickness * 0.75, radial, Math.max(3, Math.round(radial * 0.6)));
   foot.scale(1, 0.6, 1.1);
   foot.translate(to.x, to.y - thickness * 0.3, to.z);
   return mergeRaw([g, foot]);
@@ -160,19 +160,19 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
   const girth = m.bodyGirth;
   const bodyY = stand;
 
-  const body = paint(bodyGeo(bl * 0.5, girth * 0.75, girth, detail ? 10 : 6), m.fur, 0.08, 3);
+  const body = paint(bodyGeo(bl * 0.5, girth * 0.75, girth, detail ? 26 : 6), m.fur, 0.08, 3);
   body.translate(0, bodyY, 0);
   pieces.push({ geo: tag(body, PART.body, new THREE.Vector3(0, bodyY, 0)), part: PART.body, pivot: new THREE.Vector3(0, bodyY, 0), color: m.fur });
 
   // Chest and belly shading.
-  const belly = paint(bodyGeo(bl * 0.42, girth * 0.55, girth * 0.9, 6), m.belly, 0.05, 7);
+  const belly = paint(bodyGeo(bl * 0.42, girth * 0.55, girth * 0.9, detail ? 16 : 6), m.belly, 0.05, 7);
   belly.translate(bl * 0.06, bodyY - girth * 0.28, 0);
   pieces.push({ geo: tag(belly, PART.body, new THREE.Vector3()), part: PART.body, pivot: new THREE.Vector3(), color: m.belly });
 
   // Neck + head pivot at the shoulders.
   const neckPivot = new THREE.Vector3(bl * 0.42, bodyY + girth * 0.35, 0);
   const neckLen = m.neck + m.headSize * 0.5;
-  const neck = paint(new THREE.CylinderGeometry(m.headSize * 0.32, girth * 0.5, 1, detail ? 7 : 5), m.fur, 0.06, 11);
+  const neck = paint(new THREE.CylinderGeometry(m.headSize * 0.32, girth * 0.5, 1, detail ? 18 : 5, detail ? 6 : 1), m.fur, 0.06, 11);
   neck.scale(1, neckLen, 1);
   neck.translate(neckPivot.x, neckPivot.y, 0);
   const neckDir = new THREE.Vector3(1, 0.45, 0).normalize();
@@ -182,12 +182,12 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
   pieces.push({ geo: tag(neck, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.fur });
 
   const headPos = new THREE.Vector3(neckPivot.x + neckDir.x * neckLen, neckPivot.y + neckDir.y * neckLen, 0);
-  const head = paint(bodyGeo(m.headSize * 0.85, m.headSize * 0.7, m.headSize * 0.7, detail ? 8 : 5), m.fur, 0.06, 13);
+  const head = paint(bodyGeo(m.headSize * 0.85, m.headSize * 0.7, m.headSize * 0.7, detail ? 22 : 5), m.fur, 0.06, 13);
   head.translate(headPos.x, headPos.y, 0);
   pieces.push({ geo: tag(head, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.fur });
 
   // Muzzle.
-  const muzzle = paint(new THREE.CylinderGeometry(m.headSize * 0.3, m.headSize * 0.42, m.headSize * 0.8, 6), m.accent, 0.05, 17);
+  const muzzle = paint(new THREE.CylinderGeometry(m.headSize * 0.3, m.headSize * 0.42, m.headSize * 0.8, detail ? 16 : 6, detail ? 4 : 1), m.accent, 0.05, 17);
   const mq = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, -0.15, 0).normalize());
   muzzle.applyQuaternion(mq);
   muzzle.translate(headPos.x + m.headSize * 0.85, headPos.y - m.headSize * 0.1, 0);
@@ -199,7 +199,7 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
   if (detail) {
     const eyeR = Math.max(0.012, m.headSize * 0.16);
     for (const side of [-1, 1]) {
-      const eye = paint(new THREE.SphereGeometry(eyeR, 8, 6), m.eye, 0.02, 37);
+      const eye = paint(new THREE.SphereGeometry(eyeR, 16, 12), m.eye, 0.02, 37);
       eye.translate(headPos.x + m.headSize * 0.42, headPos.y + m.headSize * 0.2, side * m.headSize * 0.36);
       pieces.push({ geo: tag(eye, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.eye });
       // A hint of brow above the eye, which is what gives a face expression.
@@ -208,7 +208,7 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
       brow.translate(headPos.x + m.headSize * 0.4, headPos.y + m.headSize * 0.42, side * m.headSize * 0.36);
       pieces.push({ geo: tag(brow, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.accent });
     }
-    const nose = paint(new THREE.SphereGeometry(m.headSize * 0.16, 6, 5), m.eye, 0.02, 43);
+    const nose = paint(new THREE.SphereGeometry(m.headSize * 0.16, 12, 9), m.eye, 0.02, 43);
     nose.translate(headPos.x + m.headSize * 1.24, headPos.y - m.headSize * 0.14, 0);
     pieces.push({ geo: tag(nose, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.eye });
   }
@@ -216,7 +216,7 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
   // Ears.
   if (m.earSize > 0.03 && detail) {
     for (const side of [-1, 1]) {
-      const ear = paint(new THREE.ConeGeometry(m.earSize * 0.32, m.earSize * 1.5, 5), m.fur, 0.06, 19);
+      const ear = paint(new THREE.ConeGeometry(m.earSize * 0.32, m.earSize * 1.5, 12, 3), m.fur, 0.06, 19);
       ear.rotateZ(-0.25 * side);
       ear.rotateX(0.3);
       ear.translate(headPos.x - m.headSize * 0.1, headPos.y + m.headSize * 0.7, side * m.headSize * 0.42);
@@ -228,7 +228,7 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
   if (m.headgear === 'antlers' && detail) {
     for (const side of [-1, 1]) {
       for (let branch = 0; branch < 2; branch++) {
-        const tine = paint(new THREE.CylinderGeometry(0.045, 0.06, m.headSize * 2.4, 4), m.accent, 0.05, 23);
+        const tine = paint(new THREE.CylinderGeometry(0.045, 0.06, m.headSize * 2.4, 8, 3), m.accent, 0.05, 23);
         tine.translate(0, m.headSize * 1.2, 0);
         tine.rotateZ(side * (0.5 + branch * 0.35));
         tine.rotateX(branch === 0 ? 0.2 : -0.5);
@@ -245,7 +245,7 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
       pieces.push({ geo: tag(horn, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.accent });
     }
   } else if (m.headgear === 'mane' && detail) {
-    const mane = paint(bodyGeo(m.headSize * 1.15, m.headSize * 0.9, m.headSize * 1.05, 8), m.accent, 0.08, 31);
+    const mane = paint(bodyGeo(m.headSize * 1.15, m.headSize * 0.9, m.headSize * 1.05, 18), m.accent, 0.08, 31);
     mane.translate(headPos.x - m.headSize * 0.1, headPos.y, 0);
     pieces.push({ geo: tag(mane, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.accent });
   }
@@ -264,8 +264,8 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
     const mid = new THREE.Vector3(start.x, start.y - lowerLen * 0.5, start.z);
     const end = new THREE.Vector3(start.x, 0.02, start.z);
     if (detail) {
-      const upper = paint(legGeo(start.clone(), mid.clone(), girth * 0.16), m.accent, 0.05, part * 3);
-      const lower = paint(legGeo(mid.clone(), end.clone(), girth * 0.12), m.accent, 0.05, part * 5);
+      const upper = paint(legGeo(start.clone(), mid.clone(), girth * 0.16, 4, 12), m.accent, 0.05, part * 3);
+      const lower = paint(legGeo(mid.clone(), end.clone(), girth * 0.12, 4, 12), m.accent, 0.05, part * 5);
       pieces.push({ geo: tag(mergeRaw([upper]), part, start.clone()), part, pivot: start.clone(), color: m.accent });
       // The lower leg rotates with the whole limb from the hip, which is
       // visually correct at the distances this world is watched from.
@@ -279,7 +279,7 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
   // Tail.
   if (m.tailLength > 0.02) {
     const tailPivot = new THREE.Vector3(-bl * 0.5, bodyY + girth * 0.2, 0);
-    const tail = paint(new THREE.CylinderGeometry(m.headSize * 0.14, m.headSize * 0.2, m.tailLength, 5), m.fur, 0.06, 37);
+    const tail = paint(new THREE.CylinderGeometry(m.headSize * 0.14, m.headSize * 0.2, m.tailLength, detail ? 12 : 5, detail ? 6 : 1), m.fur, 0.06, 37);
     tail.translate(0, m.tailLength * 0.5, 0);
     tail.rotateZ(-1.1);
     tail.translate(tailPivot.x, tailPivot.y, 0);
@@ -298,16 +298,16 @@ function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry {
   const bl = m.bodyLength;
   const girth = m.bodyGirth;
 
-  const body = paint(bodyGeo(bl * 0.5, girth * 0.85, girth, detail ? 10 : 6), m.fur, 0.07, 41);
+  const body = paint(bodyGeo(bl * 0.5, girth * 0.85, girth, detail ? 24 : 6), m.fur, 0.07, 41);
   body.translate(0, stand, 0);
   pieces.push({ geo: tag(body, PART.body, new THREE.Vector3()), part: PART.body, pivot: new THREE.Vector3(), color: m.fur });
 
-  const belly = paint(bodyGeo(bl * 0.4, girth * 0.6, girth * 0.85, 6), m.belly, 0.05, 43);
+  const belly = paint(bodyGeo(bl * 0.4, girth * 0.6, girth * 0.85, detail ? 14 : 6), m.belly, 0.05, 43);
   belly.translate(bl * 0.04, stand - girth * 0.3, 0);
   pieces.push({ geo: tag(belly, PART.body, new THREE.Vector3()), part: PART.body, pivot: new THREE.Vector3(), color: m.belly });
 
   const headPivot = new THREE.Vector3(bl * 0.42, stand + girth * 0.35, 0);
-  const head = paint(bodyGeo(m.headSize * 0.8, m.headSize * 0.75, m.headSize * 0.75, detail ? 8 : 5), m.fur, 0.05, 47);
+  const head = paint(bodyGeo(m.headSize * 0.8, m.headSize * 0.75, m.headSize * 0.75, detail ? 18 : 5), m.fur, 0.05, 47);
   head.translate(headPivot.x + m.headSize * 0.3, headPivot.y, 0);
   pieces.push({ geo: tag(head, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.fur });
 
@@ -316,13 +316,13 @@ function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry {
   if (detail) {
     const eyeR = Math.max(0.01, m.headSize * 0.18);
     for (const side of [-1, 1]) {
-      const eye = paint(new THREE.SphereGeometry(eyeR, 8, 6), m.eye, 0.02, 61);
+      const eye = paint(new THREE.SphereGeometry(eyeR, 14, 10), m.eye, 0.02, 61);
       eye.translate(headPivot.x + m.headSize * 0.42, headPivot.y + m.headSize * 0.12, side * m.headSize * 0.34);
       pieces.push({ geo: tag(eye, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.eye });
     }
   }
 
-  const beak = paint(new THREE.ConeGeometry(m.headSize * 0.22, m.headSize * 0.9, 5), m.accent, 0.04, 53);
+  const beak = paint(new THREE.ConeGeometry(m.headSize * 0.22, m.headSize * 0.9, detail ? 12 : 5), m.accent, 0.04, 53);
   beak.rotateZ(-Math.PI / 2);
   beak.translate(headPivot.x + m.headSize * 1.1, headPivot.y, 0);
   pieces.push({ geo: tag(beak, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.accent });
@@ -360,7 +360,7 @@ function buildFish(m: Morphology, detail: boolean): THREE.BufferGeometry {
   const pieces: Piece[] = [];
   const bl = m.bodyLength;
   const girth = m.bodyGirth;
-  const body = paint(bodyGeo(bl * 0.5, girth * 0.6, girth * 0.7, detail ? 10 : 6), m.fur, 0.07, 61);
+  const body = paint(bodyGeo(bl * 0.5, girth * 0.6, girth * 0.7, detail ? 24 : 6), m.fur, 0.07, 61);
   pieces.push({ geo: tag(body, PART.body, new THREE.Vector3()), part: PART.body, pivot: new THREE.Vector3(), color: m.fur });
 
   const belly = paint(bodyGeo(bl * 0.35, girth * 0.4, girth * 0.6, 6), m.belly, 0.05, 67);
@@ -368,7 +368,7 @@ function buildFish(m: Morphology, detail: boolean): THREE.BufferGeometry {
   pieces.push({ geo: tag(belly, PART.body, new THREE.Vector3()), part: PART.body, pivot: new THREE.Vector3(), color: m.belly });
 
   const headPivot = new THREE.Vector3(bl * 0.35, 0, 0);
-  const head = paint(bodyGeo(m.headSize * 0.6, m.headSize * 0.5, m.headSize * 0.55, 6), m.fur, 0.05, 71);
+  const head = paint(bodyGeo(m.headSize * 0.6, m.headSize * 0.5, m.headSize * 0.55, detail ? 14 : 6), m.fur, 0.05, 71);
   head.translate(bl * 0.32, 0, 0);
   pieces.push({ geo: tag(head, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.fur });
 
@@ -376,7 +376,7 @@ function buildFish(m: Morphology, detail: boolean): THREE.BufferGeometry {
   if (detail) {
     const eyeR = Math.max(0.008, m.headSize * 0.22);
     for (const side of [-1, 1]) {
-      const eye = paint(new THREE.SphereGeometry(eyeR, 6, 5), m.eye, 0.02, 79);
+      const eye = paint(new THREE.SphereGeometry(eyeR, 12, 9), m.eye, 0.02, 79);
       eye.translate(bl * 0.38, m.headSize * 0.22, side * m.headSize * 0.3);
       pieces.push({ geo: tag(eye, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.eye });
     }
