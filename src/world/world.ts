@@ -1582,11 +1582,38 @@ export class World {
     return best;
   }
 
-  /** Nearest dense cover: shrubs or closed canopy. */
+  /**
+   * Nearest dense cover: shrubs or closed canopy. Cover changes over seasons,
+   * not seconds, so the search is cached per 4×4-cell block and cleared each
+   * simulated day. The distance is always measured from the animal's own
+   * position, so only the choice of cover is shared between nearby animals.
+   */
+  private coverCache = new Map<number, { x: number; y: number; score: number } | null>();
+  private coverCacheDay = -1;
+
   findCover(x: number, y: number, range = 180): { x: number; y: number; distance: number } | null {
     const t = this.terrain;
+    if (this.clock.day !== this.coverCacheDay) {
+      this.coverCache.clear();
+      this.coverCacheDay = this.clock.day;
+    }
     const cx = clamp(Math.round(t.worldToCellX(x)), 0, t.last);
     const cy = clamp(Math.round(t.worldToCellY(y)), 0, t.last);
+    const bx = cx >> 2;
+    const by = cy >> 2;
+    const key = bx * 65536 + by;
+    let best: { x: number; y: number; score: number } | null;
+    if (this.coverCache.has(key)) {
+      best = this.coverCache.get(key) ?? null;
+    } else {
+      best = this.searchCover(bx * 4 + 2, by * 4 + 2, range);
+      this.coverCache.set(key, best);
+    }
+    return best ? { x: best.x, y: best.y, distance: Math.hypot(best.x - x, best.y - y) } : null;
+  }
+
+  private searchCover(cx: number, cy: number, range: number): { x: number; y: number; score: number } | null {
+    const t = this.terrain;
     const step = Math.max(2, Math.round(range / t.cellUnits / 8));
     let best: { x: number; y: number; score: number } | null = null;
     for (let ring = 1; ring <= 10; ring++) {
@@ -1600,12 +1627,12 @@ export class World {
         const wx = t.cellToWorldX(sx);
         const wy = t.cellToWorldY(sy);
         const cover = clamp01(t.canopy.data[i] * 0.8 + this.vegetation.coverAt(wx, wy) * 0.6);
-        const d = Math.hypot(wx - x, wy - y);
+        const d = Math.hypot(wx - t.cellToWorldX(cx), wy - t.cellToWorldY(cy));
         const score = cover * 1.4 - d / Math.max(1, range);
         if (cover > 0.35 && (!best || score > best.score)) best = { x: wx, y: wy, score };
       }
     }
-    return best ? { x: best.x, y: best.y, distance: Math.hypot(best.x - x, best.y - y) } : null;
+    return best;
   }
 
   /** Nearest shade (a cool spot under a canopy). */

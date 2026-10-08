@@ -150,6 +150,32 @@ export class Aggregates {
     return p * this.patchCells;
   }
 
+  private capStamp = -1;
+  private capCache = new Map<string, Float32Array>();
+
+  /**
+   * Carrying capacity, cached for one simulated hour. Capacity follows climate
+   * and light, which change over hours and seasons, so an hourly cache keeps the
+   * day–night response while skipping the per-patch environment sampling.
+   */
+  private capacityCached(s: AggregateSpecies, pcx: number, pcy: number): number {
+    const clock = this.climate.clock;
+    const stamp = clock.day * 24 + Math.floor(clock.hour);
+    if (stamp !== this.capStamp) {
+      this.capCache.clear();
+      this.capStamp = stamp;
+    }
+    let arr = this.capCache.get(s.key);
+    if (!arr) {
+      arr = new Float32Array((this.biomass.get(s.key) as DensityGrid).counts.length).fill(-1);
+      this.capCache.set(s.key, arr);
+    }
+    const n = Math.round(Math.sqrt(arr.length));
+    const i = pcy * n + pcx;
+    if (arr[i] < 0) arr[i] = this.capacityAt(s, pcx, pcy);
+    return arr[i];
+  }
+
   /** Carrying capacity of a patch for a species, from real environment state. */
   capacityAt(s: AggregateSpecies, pcx: number, pcy: number): number {
     const t = this.terrain;
@@ -233,7 +259,7 @@ export class Aggregates {
         for (let pcx = 0; pcx < n; pcx++) {
           const i = pcy * n + pcx;
           let val = b[i];
-          const K = this.capacityAt(s, pcx, pcy);
+          const K = this.capacityCached(s, pcx, pcy);
           // Dispersal: a small flux between neighbours keeps patches connected.
           let flux = 0;
           if (pcx > 0) flux += b[i - 1] - val;
