@@ -1316,7 +1316,7 @@ export class CreatureRenderer {
     this.skinned.load();
     // Hand-built species get a procedural rig from their own mesh, so their
     // close-ups are animated like the fox.
-    for (const key of ['rabbit', 'deer', 'wolf', 'lynx', 'bison'] as const) {
+    for (const key of ['rabbit', 'deer', 'wolf', 'lynx', 'bison', 'goat'] as const) {
       const sp = SPECIES.find((x) => x.key === key);
       if (!sp) continue;
       // Generated smooth mesh (tools/animal_models); fall back to the hand-built one.
