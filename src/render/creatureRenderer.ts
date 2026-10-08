@@ -9,12 +9,13 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 /**
  * Real CC0 rigged models by Quaternius (Ultimate Animated Animal Pack), with
  * their clip names mapped to the simulation's states. See ATTRIBUTION.md.
- * The chamois stands in for the mountain goat.
+ * The goat is a realistic CC BY 4.0 model (Hendrik Reyneke), rigged here with
+ * procedural clips (tools/animal_models/rig_goat.py). See ATTRIBUTION.md.
  */
 const QUATERNIUS: Partial<Record<string, { url: string; clips: { idle: string; walk: string; run: string; rest: string; die: string; bite: string } }>> = {
   deer: { url: 'assets/models/quaternius/stag.glb', clips: { idle: 'Idle', walk: 'Walk', run: 'Gallop', rest: 'Eating', die: 'Death', bite: 'Attack_Headbutt' } },
   wolf: { url: 'assets/models/quaternius/wolf.glb', clips: { idle: 'Idle', walk: 'Walk', run: 'Gallop', rest: 'Eating', die: 'Death', bite: 'Attack' } },
-  goat: { url: 'assets/models/quaternius/chamois.glb', clips: { idle: 'Idle', walk: 'Walk', run: 'Gallop', rest: 'Idle_Headlow', die: 'Death', bite: 'Attack_Headbutt' } },
+  goat: { url: 'assets/models/reyneke/goat.glb', clips: { idle: 'Idle', walk: 'Walk', run: 'Gallop', rest: 'Idle', die: 'Death', bite: 'Eating' } },
 };
 import { RENDER } from '../core/config';
 import type { World } from '../world/world';

@@ -51,7 +51,7 @@ to give attribution, though it is appreciated."* The CC0 1.0 deed is at
 | --- | --- | --- | --- |
 | `stag.glb` (game species: deer) | Stag, rigged, clips Walk, Gallop, Idle, Eating, Idle_Headlow, Attack_Headbutt, Death | Quaternius, *Ultimate Animated Animal Pack* (<https://quaternius.com/packs/ultimateanimatedanimals.html>). Copy taken from `postojomierz-lang/postojomierz` (`rysy/models/animals/stag.glb`), recoloured there | CC0-1.0 (`QUATERNIUS-LICENSE.txt`) |
 | `wolf.glb` (wolf) | Wolf, rigged, clips Walk, Gallop, Idle, Eating, Attack, Death | As above, `rysy/models/animals/wolf.glb` | CC0-1.0 |
-| `chamois.glb` (goat; a chamois stands in for the mountain goat) | Chamois, deer-based, rigged, clips as the stag | As above, `rysy/models/animals/chamois.glb`, reshaped from the deer by the source repo | CC0-1.0 |
+| `reyneke/goat.glb` (game species: goat) | Goat, realistic mesh by **hendrikReyneke** on Sketchfab (<https://sketchfab.com/3d-models/goat-2624ac2ce2364930ba2d5f70eb7aa1ea>), rigged and animated in this repository (`tools/animal_models/rig_goat.py`: skeleton, skin weights, clips Idle, Walk, Gallop, Eating, Death). Mesh and texture unchanged. Source copy taken from `tot-ra/rebel-reval` (`assets/animals/hendrik_reyneke/goat/goat.glb`) | CC BY 4.0 (attribution required; changes: rigged and animated) |
 
 The Quaternius licence is in `public/assets/models/quaternius/QUATERNIUS-LICENSE.txt`.
 
