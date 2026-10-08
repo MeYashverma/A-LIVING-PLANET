@@ -170,13 +170,39 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
 
         ${TRIPLANAR_NORMAL}
 
-        /** Albedo sampled in the three axis projections and blended by slope. */
+        /**
+         * Albedo sampled in the three axis projections and blended by slope. A
+         * smooth, world-position-based offset warps every lookup by a fraction of
+         * a tile, so the eye cannot find the period of the scan. It is a continuous
+         * function of position, so there are no seams between chunks.
+         */
         vec3 triplanarColor(sampler2D map, vec3 p, vec3 n) {
           vec3 w = pow(abs(n), vec3(4.0));
           w /= max(1e-4, w.x + w.y + w.z);
-          return texture2D(map, p.zy * uScale).rgb * w.x
-               + texture2D(map, p.xz * uScale).rgb * w.y
-               + texture2D(map, p.xy * uScale).rgb * w.z;
+          vec2 warp = vec2(vnoise(p.xz * 0.021), vnoise(p.xz * 0.021 + 17.3)) - 0.5;
+          warp += (vec2(vnoise(p.xz * 0.094 + 5.1), vnoise(p.xz * 0.094 + 11.9)) - 0.5) * 0.35;
+          return texture2D(map, p.zy * uScale + warp * 0.9).rgb * w.x
+               + texture2D(map, p.xz * uScale + warp * 0.9).rgb * w.y
+               + texture2D(map, p.xy * uScale + warp * 0.9).rgb * w.z;
+        }
+
+        /**
+         * Caustic light on a lit floor: the classic layered-sine pattern, cheap
+         * enough to run per fragment. Returns 0..1 bright seams.
+         */
+        float caustic(vec2 uv, float t) {
+          vec2 p = mod(uv * 6.2831, 6.2831) - 250.0;
+          vec2 i = p;
+          float c = 1.0;
+          float inten = 0.005;
+          for (int n = 0; n < 4; n++) {
+            float tt = t * (1.0 - (3.5 / float(n + 1)));
+            i = p + vec2(cos(tt - i.x) + sin(tt + i.y), sin(tt - i.y) + cos(tt + i.x));
+            c += 1.0 / length(vec2(p.x / (sin(i.x + tt) / inten), p.y / (cos(i.y + tt) / inten)));
+          }
+          c /= 4.0;
+          c = 1.17 - pow(c, 1.4);
+          return clamp(pow(abs(c), 8.0), 0.0, 1.0);
         }
       `,
       )
@@ -193,7 +219,12 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
           sa /= sum; sb /= sum;
 
           vec3 albedo = vec3(0.0);
-          albedo += triplanarColor(uGrassC, vWorld, N) * sa.x;
+          // Meadow: grass varies in hue as well as value, from olive to bright
+          // green to a warm yellow-green patch, so a grassland reads as a meadow.
+          vec3 grassCol = triplanarColor(uGrassC, vWorld, N);
+          float meadowHue = fbm2(vWorld.xz * 0.012 + 4.0);
+          grassCol *= mix(vec3(0.80, 0.97, 0.74), vec3(1.10, 1.12, 0.78), meadowHue);
+          albedo += grassCol * sa.x;
           albedo += triplanarColor(uSandC, vWorld, N) * sa.y;
           albedo += triplanarColor(uRockC, vWorld, N) * sa.z;
           albedo += triplanarColor(uSnowC, vWorld, N) * sa.w;
@@ -206,6 +237,19 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
           float macro2 = fbm2(vWorld.xz * 0.019 + 13.7);
           albedo *= mix(0.84, 1.16, macro);
           albedo *= mix(vec3(0.94, 0.99, 0.90), vec3(1.07, 1.02, 0.95), macro2);
+
+          // Shoreline: the band just above and below the sea surface is wet,
+          // silty and darker, so land meets water without a hard line.
+          float shore = 1.0 - smoothstep(0.0, 1.1, abs(vWorld.y));
+          albedo *= mix(1.0, 0.68, shore);
+
+          // Shallow water floor: sunlit caustic seams, fading with depth.
+          float depthM = -vWorld.y;
+          if (depthM > 0.0 && depthM < 3.0) {
+            float lit = 1.0 - smoothstep(0.0, 3.0, depthM);
+            float c = caustic(vWorld.xz * 0.05, uTime * 0.7);
+            albedo *= 1.0 + c * 0.85 * lit;
+          }
 
           // The simulation's own state tints the material. It arrives as the
           // mesh's vertex colour, which three multiplies into diffuseColor
@@ -268,7 +312,7 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
       );
     }
   };
-  material.customProgramCacheKey = () => `terrain-ground-v2-${opts.triplanar ? 'tri' : 'planar'}`;
+  material.customProgramCacheKey = () => `terrain-ground-v3-${opts.triplanar ? 'tri' : 'planar'}`;
 
   return { material, uniforms };
 }
