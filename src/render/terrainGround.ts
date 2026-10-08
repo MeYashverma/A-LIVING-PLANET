@@ -61,6 +61,12 @@ const TRIPLANAR_NORMAL = /* glsl */ `
   }
 `;
 
+function blankWaterTexture(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.needsUpdate = true;
+  return tex;
+}
+
 export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boolean }): {
   material: THREE.MeshStandardMaterial;
   uniforms: SplatUniforms;
@@ -69,6 +75,12 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
     uTime: { value: 0 },
     uWind: { value: new THREE.Vector2(0, 0) },
     uAsh: { value: 0 },
+    // Per-cell water surface: R = wet flag, G = surface height scaled between
+    // uWaterYMin and uWaterYMax. Set by the terrain mesh whenever water changes.
+    uWaterTex: { value: blankWaterTexture() },
+    uWaterYMin: { value: 0 },
+    uWaterYMax: { value: 1 },
+    uWaterHalf: { value: 1 },
     // World units per texture tile. Small values tile more often; the macro
     // noise is what stops that reading as a repeating pattern.
     uScale: { value: 0.075 },
@@ -150,6 +162,10 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
         uniform float uExposure;
         uniform float uAsh;
         uniform vec2 uWind;
+        uniform sampler2D uWaterTex;
+        uniform float uWaterYMin;
+        uniform float uWaterYMax;
+        uniform float uWaterHalf;
         ${CORE.map((n) => `uniform sampler2D ${n}C;\nuniform sampler2D ${n}N;\nuniform sampler2D ${n}R;`).join('\n')}
         ${TINT.map((n) => `uniform sampler2D ${n}C;`).join('\n')}
 
@@ -238,14 +254,20 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
           albedo *= mix(0.84, 1.16, macro);
           albedo *= mix(vec3(0.94, 0.99, 0.90), vec3(1.07, 1.02, 0.95), macro2);
 
-          // Shoreline: the band just above and below the sea surface is wet,
+          // Water surface under this fragment (sea or lake), from the per-cell
+          // texture. Land far from water has wet = 0 and gets no shore or caustics.
+          vec4 wz = texture2D(uWaterTex, (vWorld.xz + uWaterHalf) / (2.0 * uWaterHalf));
+          float wet = wz.r;
+          float surfY = mix(uWaterYMin, uWaterYMax, wz.g);
+
+          // Shoreline: the band just above and below the water surface is wet,
           // silty and darker, so land meets water without a hard line.
-          float shore = 1.0 - smoothstep(0.0, 1.1, abs(vWorld.y));
+          float shore = wet * (1.0 - smoothstep(0.0, 1.1, abs(vWorld.y - surfY)));
           albedo *= mix(1.0, 0.68, shore);
 
           // Shallow water floor: sunlit caustic seams, fading with depth.
-          float depthM = -vWorld.y;
-          if (depthM > 0.0 && depthM < 3.0) {
+          float depthM = surfY - vWorld.y;
+          if (wet > 0.5 && depthM > 0.0 && depthM < 3.0) {
             float lit = 1.0 - smoothstep(0.0, 3.0, depthM);
             float c = caustic(vWorld.xz * 0.05, uTime * 0.7);
             albedo *= 1.0 + c * 0.85 * lit;
@@ -312,7 +334,7 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
       );
     }
   };
-  material.customProgramCacheKey = () => `terrain-ground-v3-${opts.triplanar ? 'tri' : 'planar'}`;
+  material.customProgramCacheKey = () => `terrain-ground-v4-${opts.triplanar ? 'tri' : 'planar'}`;
 
   return { material, uniforms };
 }

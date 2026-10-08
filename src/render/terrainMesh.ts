@@ -51,6 +51,7 @@ export class TerrainMesh {
   private plantAttr: THREE.BufferAttribute;
   private aoAttr: THREE.BufferAttribute;
   private groundUniforms: SplatUniforms;
+  private waterTex: THREE.DataTexture | null = null;
   private uniforms: WaterUniforms;
   private lastRefresh = -1e9;
   /** GPU ripple simulation, present only where float render targets exist. */
@@ -457,8 +458,67 @@ export class TerrainMesh {
     return mask;
   }
 
+  /**
+   * Per-cell water surface for the ground shader: R = wet, G = surface height
+   * mapped into [yMin, yMax]. Sea and lakes both count; dry land is R = 0.
+   */
+  private updateWaterSurface(): void {
+    const t = this.world.terrain;
+    const n = t.size;
+    const sea = t.params.seaLevel;
+    const h = t.height.data;
+    const d = t.waterDepth.data;
+    const surf = new Float32Array(n * n);
+    const wet = new Uint8Array(n * n);
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < n * n; i++) {
+      let s = 0;
+      if (h[i] < sea) {
+        s = t.elevationOf(sea);
+        wet[i] = 1;
+      } else if (d[i] > 0.012) {
+        s = t.elevationOf(h[i]) + d[i];
+        wet[i] = 1;
+      }
+      if (wet[i]) {
+        surf[i] = s;
+        if (s < lo) lo = s;
+        if (s > hi) hi = s;
+      }
+    }
+    if (!(hi > lo)) {
+      lo = 0;
+      hi = 1;
+    }
+    const bytes = new Uint8Array(n * n * 4);
+    const span = hi - lo;
+    for (let i = 0; i < n * n; i++) {
+      bytes[i * 4] = wet[i] ? 255 : 0;
+      bytes[i * 4 + 1] = wet[i] ? Math.round(((surf[i] - lo) / span) * 255) : 0;
+      bytes[i * 4 + 3] = 255;
+    }
+    if (!this.waterTex) {
+      this.waterTex = new THREE.DataTexture(bytes, n, n, THREE.RGBAFormat, THREE.UnsignedByteType);
+      this.waterTex.magFilter = THREE.LinearFilter;
+      this.waterTex.minFilter = THREE.LinearFilter;
+      this.waterTex.wrapS = THREE.ClampToEdgeWrapping;
+      this.waterTex.wrapT = THREE.ClampToEdgeWrapping;
+      this.waterTex.generateMipmaps = false;
+    } else {
+      this.waterTex.image = { data: bytes, width: n, height: n };
+    }
+    this.waterTex.needsUpdate = true;
+    const g = this.groundUniforms;
+    g.uWaterTex.value = this.waterTex;
+    g.uWaterYMin.value = lo;
+    g.uWaterYMax.value = hi;
+    g.uWaterHalf.value = t.half;
+  }
+
   /** Rebuild the water surface geometry from the hydrology fields. */
   rebuildWater(): void {
+    this.updateWaterSurface();
     const t = this.world.terrain;
     const n = t.size;
     const sea = t.params.seaLevel;
