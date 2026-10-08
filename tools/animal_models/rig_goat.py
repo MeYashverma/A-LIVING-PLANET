@@ -75,9 +75,25 @@ for leg in ['FL', 'FR', 'RL', 'RR']:
         (f'{leg}_lo', f'{leg}_up', (x, 0.22, z)),
         (f'{leg}_ft', f'{leg}_lo', (x, 0.03, z + 0.02)),
     ]
+# The skeleton is authored for the goat (REF bounds). RIG_TARGET=bear stretches it
+# to the bear's bounds, after its centimetre mesh is scaled to metres (see below).
+REF_MIN = np.array([-0.132, 0.0, -0.6])
+REF_MAX = np.array([0.132, 0.824, 0.6])
+if os.environ.get('RIG_TARGET') == 'bear':
+    TGT_MIN = np.array([-0.378, 0.0, -1.079])
+    TGT_MAX = np.array([0.378, 1.399, 1.079])
+else:
+    TGT_MIN, TGT_MAX = REF_MIN, REF_MAX
+
+
+def remap(p):
+    p = np.asarray(p, float)
+    return TGT_MIN + (p - REF_MIN) / (REF_MAX - REF_MIN) * (TGT_MAX - TGT_MIN)
+
+
 NAMES = [b[0] for b in BONES]
 PARENT = {b[0]: b[1] for b in BONES}
-GBIND = {b[0]: np.array(b[2], float) for b in BONES}
+GBIND = {b[0]: remap(b[2]) for b in BONES}
 CHILDREN = {n: [c for c in NAMES if PARENT[c] == n] for n in NAMES}
 
 # Weight segments: origin -> first child (or an explicit tip for leaves).
@@ -92,7 +108,7 @@ for leg in ['FL', 'FR', 'RL', 'RR']:
 def segment(n):
     a = GBIND[n]
     if n in TIP:
-        b = np.array(TIP[n], float)
+        b = remap(TIP[n])
     else:
         b = GBIND[CHILDREN[n][0]]
     return a, b
@@ -195,6 +211,10 @@ geom = list(scene.geometry.values())
 assert len(geom) == 1, 'expected one mesh'
 mesh = geom[0]
 V = np.asarray(mesh.vertices, np.float32)
+if os.environ.get('RIG_TARGET') == 'bear':
+    # The bear is authored in centimetres and centred on the origin; metres, feet at y = 0.
+    V = V * np.float32(0.01)
+    V[:, 1] -= V[:, 1].min()
 F = np.asarray(mesh.faces, np.uint32)
 N = np.asarray(mesh.vertex_normals, np.float32)
 UV = np.asarray(mesh.visual.uv, np.float32)
