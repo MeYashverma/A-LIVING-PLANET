@@ -231,7 +231,99 @@ function addQuadrupedSignature(
   }
 }
 
+/**
+ * Rabbit, built by hand rather than from the shared quadruped template: a
+ * haunched rump, a short neck, a muzzle with a pink nose, long ears with pale
+ * insides, folded forelegs, long hind feet and a white scut.
+ */
+function buildRabbit(m: Morphology, detail: boolean): THREE.BufferGeometry {
+  const L = m.bodyLength;
+  const G = m.bodyGirth;
+  const S = m.standHeight;
+  const H = m.headSize;
+  const pieces: Piece[] = [];
+  const add = (geo: THREE.BufferGeometry, part: number, pivot: THREE.Vector3, color: [number, number, number]) => {
+    pieces.push({ geo: tag(geo, part, pivot), part, pivot: pivot.clone(), color });
+  };
+  const seg = detail ? 18 : 6;
+  const origin = new THREE.Vector3();
+  const sph = (rx: number, ry: number, rz: number, x: number, y: number, z: number, color: [number, number, number], seed: number, part = PART.body, pivot = origin) => {
+    const g = paint(bodyGeo(rx, ry, rz, seg), color, 0.06, seed);
+    g.translate(x, y, z);
+    add(g, part, pivot, color);
+  };
+
+  // Torso: a rounded body with the haunch at the rear.
+  sph(L * 0.34, G * 0.55, G * 0.6, 0, S, 0, m.fur, 3);
+  sph(L * 0.22, G * 0.66, G * 0.72, -L * 0.2, S + G * 0.05, 0, m.fur, 5);
+  sph(L * 0.2, G * 0.5, G * 0.52, L * 0.26, S - G * 0.04, 0, m.fur, 7);
+  sph(L * 0.3, G * 0.3, G * 0.4, L * 0.02, S - G * 0.34, 0, m.belly, 9);
+
+  // Neck and head.
+  const neckPivot = new THREE.Vector3(L * 0.34, S + G * 0.15, 0);
+  const headC = new THREE.Vector3(L * 0.5 + H * 0.2, S + G * 0.3 + H * 0.15, 0);
+  add(tube(neckPivot, headC, G * 0.42, H * 0.6, detail ? 14 : 6), PART.head, neckPivot, m.fur);
+  sph(H * 0.9, H * 0.78, H * 0.72, headC.x, headC.y, 0, m.fur, 13, PART.head, neckPivot);
+  sph(H * 0.5, H * 0.42, H * 0.5, headC.x + H * 0.08, headC.y - H * 0.25, 0, m.fur, 15, PART.head, neckPivot);
+
+  // Muzzle and nose.
+  sph(H * 0.42, H * 0.34, H * 0.36, headC.x + H * 0.7, headC.y - H * 0.18, 0, m.accent, 17, PART.head, neckPivot);
+  sph(H * 0.13, H * 0.11, H * 0.13, headC.x + H * 1.1, headC.y - H * 0.1, 0, [0.86, 0.55, 0.55], 19, PART.head, neckPivot);
+
+  // Eyes.
+  if (detail) {
+    for (const side of [-1, 1]) {
+      sph(H * 0.17, H * 0.17, H * 0.17, headC.x + H * 0.46, headC.y + H * 0.14, side * H * 0.6, m.eye, 21, PART.head, neckPivot);
+    }
+  }
+
+  // Long ears, pale inside. Each ear pivots at the top of the head.
+  for (const side of [-1, 1]) {
+    const part = side < 0 ? PART.earL : PART.earR;
+    const base = new THREE.Vector3(headC.x - H * 0.2, headC.y + H * 0.6, side * H * 0.32);
+    const ear = paint(bodyGeo(H * 0.2, H * 1.15, H * 0.1, detail ? 12 : 5), m.fur, 0.05, 23 + side);
+    ear.rotateZ(-0.18);
+    ear.translate(base.x, base.y + H * 1.0, base.z);
+    add(ear, part, base, m.fur);
+    const inner = paint(bodyGeo(H * 0.09, H * 0.95, H * 0.03, detail ? 10 : 4), m.accent, 0.04, 29 + side);
+    inner.rotateZ(-0.18);
+    inner.translate(base.x + H * 0.02, base.y + H * 0.95, base.z + side * H * 0.07);
+    add(inner, part, base, m.accent);
+  }
+
+  // Front legs, folded under the chest.
+  for (const side of [-1, 1]) {
+    const shoulder = new THREE.Vector3(L * 0.3, S - G * 0.4, side * G * 0.4);
+    const paw = new THREE.Vector3(L * 0.34, 0.03, side * G * 0.4);
+    const part = side < 0 ? PART.legFL : PART.legFR;
+    add(mergeRaw([legGeo(shoulder.clone(), paw.clone(), G * 0.13, 2, detail ? 10 : 5)]), part, shoulder, m.accent);
+  }
+
+  // Hind legs: a big thigh at the hip and a long hind foot.
+  for (const side of [-1, 1]) {
+    const hip = new THREE.Vector3(-L * 0.22, S - G * 0.1, side * G * 0.5);
+    const part = side < 0 ? PART.legRL : PART.legRR;
+    const thigh = paint(bodyGeo(G * 0.42, G * 0.46, G * 0.36, detail ? 14 : 5), m.fur, 0.05, 31 + side);
+    thigh.translate(hip.x, hip.y, hip.z);
+    add(thigh, part, hip, m.fur);
+    const shin = paint(legGeo(hip.clone(), new THREE.Vector3(-L * 0.12, 0.05, side * G * 0.5), G * 0.14, 2, detail ? 10 : 5), m.accent, 0.05, 37 + side);
+    add(shin, part, hip, m.accent);
+    const foot = paint(bodyGeo(L * 0.2, G * 0.1, G * 0.2, detail ? 12 : 5), m.accent, 0.04, 41 + side);
+    foot.translate(-L * 0.08, 0.05, side * G * 0.5);
+    add(foot, part, hip, m.accent);
+  }
+
+  // Scut.
+  const tailPivot = new THREE.Vector3(-L * 0.5, S, 0);
+  sph(G * 0.3, G * 0.3, G * 0.3, -L * 0.52, S + G * 0.05, 0, m.belly, 43, PART.tail, tailPivot);
+
+  const merged = mergePieces(pieces);
+  applyPattern(merged, m);
+  return merged;
+}
+
 export function buildQuadruped(m: Morphology, detail: boolean, key?: string): THREE.BufferGeometry {
+  if (key === 'rabbit') return buildRabbit(m, detail);
   const pieces: Piece[] = [];
   const stand = m.standHeight;
   const bl = m.bodyLength;
