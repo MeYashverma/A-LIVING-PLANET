@@ -94,8 +94,29 @@ export class HUD {
     document.body.append(this.topbar, this.bottombar, this.toasts, this.captions, this.modalLayer);
     this.buildTop();
     this.buildBottom();
+    this.trackBarHeights();
     host.onToast((text, kind) => this.toast(text, kind));
     host.onCaption((text, subject) => this.setCaption(text, subject));
+  }
+
+  /**
+   * Publish the real heights of the top and bottom bars as CSS variables so the
+   * side columns and toasts sit below/above them at any window size, wrap state
+   * or UI scale. Nothing in the layout assumes a fixed bar height.
+   */
+  private trackBarHeights(): void {
+    const root = document.documentElement;
+    const apply = (): void => {
+      root.style.setProperty('--topbar-h', `${Math.ceil(this.topbar.getBoundingClientRect().height)}px`);
+      root.style.setProperty('--bottombar-h', `${Math.ceil(this.bottombar.getBoundingClientRect().height)}px`);
+    };
+    apply();
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(apply).observe(this.topbar);
+      new ResizeObserver(apply).observe(this.bottombar);
+    } else {
+      window.addEventListener('resize', apply);
+    }
   }
 
   /* ------------------------------------------------------------------ */

@@ -24,6 +24,12 @@
   --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Roboto Mono', Menlo, monospace;
   --radius: 3px;
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --panel-solid: #161b20;
+  /* Measured from the real bars at runtime (see hud.ts), not magic numbers. */
+  --topbar-h: 44px;
+  --bottombar-h: 96px;
+  --col-top: calc(var(--topbar-h) + 18px);
+  --col-max-h: calc(100vh - var(--topbar-h) - var(--bottombar-h) - 34px);
 }
 
 * {
@@ -88,18 +94,19 @@ textarea {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: linear-gradient(180deg, rgba(21, 26, 31, 0.97), rgba(17, 21, 25, 0.97));
+  background: var(--panel-solid);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 6px 10px;
   box-shadow: var(--shadow);
-  backdrop-filter: blur(2px);
 }
 
 #topbar {
   left: 10px;
   right: 10px;
   top: 10px;
+  flex-wrap: wrap;
+  row-gap: 6px;
 }
 
 #bottombar {
@@ -112,27 +119,27 @@ textarea {
 
 #leftcol {
   left: 10px;
-  top: 66px;
+  top: var(--col-top);
   width: 296px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: calc(100vh - 150px);
+  max-height: var(--col-max-h);
 }
 
 #rightcol {
   right: 10px;
-  top: 66px;
+  top: var(--col-top);
   width: 372px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: calc(100vh - 150px);
+  max-height: var(--col-max-h);
 }
 
 #toasts {
   right: 10px;
-  top: 66px;
+  top: var(--col-top);
   width: 372px;
   display: flex;
   flex-direction: column;
@@ -915,7 +922,7 @@ body.high-contrast {
     right: 10px;
     width: auto;
     top: auto;
-    bottom: 62px;
+    bottom: calc(var(--bottombar-h) + 8px);
     max-height: 46vh;
   }
 
