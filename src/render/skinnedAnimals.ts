@@ -185,3 +185,22 @@ export class SkinnedAnimals {
     this.defs.clear();
   }
 }
+
+/**
+ * A death clip for a rig that has none: the body rolls onto its side about the
+ * forward (+Z) axis and sinks a little into the ground, then holds. The rig's
+ * root bone is named `bone`; its children (legs, head, tail) follow it.
+ */
+export function addDeathClip(animations: THREE.AnimationClip[], bone: string, duration = 0.9): void {
+  if (animations.some((a) => a.name === 'Death')) return;
+  const times = [0, duration];
+  const roll = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+  const start = new THREE.Quaternion();
+  const end = start.clone().multiply(roll);
+  const rot = new THREE.QuaternionKeyframeTrack(`${bone}.quaternion`, times, [
+    start.x, start.y, start.z, start.w,
+    end.x, end.y, end.z, end.w,
+  ]);
+  const pos = new THREE.VectorKeyframeTrack(`${bone}.position`, times, [0, 0.193, 0, 0, 0.12, 0]);
+  animations.push(new THREE.AnimationClip('Death', duration, [rot, pos]));
+}

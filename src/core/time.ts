@@ -115,13 +115,16 @@ export class WorldClock {
     return this.solarElevation <= 0.02;
   }
 
-  /** Advance by wall-clock seconds at the current speed. */
-  update(realSeconds: number): number {
+  /**
+   * In-game minutes owed for `realSeconds` of wall-clock time at the current
+   * speed. This does not move the clock: the world pays the minutes out in
+   * whole simulation steps, and each step advances the clock. Advancing here
+   * as well counted every minute twice.
+   */
+  minutesOwed(realSeconds: number): number {
     if (this.paused) return 0;
     const minutesPerRealSecond = (TIME.minutesPerDay / TIME.realSecondsPerDayAt1x) * this.speed;
-    const advanced = realSeconds * minutesPerRealSecond;
-    this.minutes += advanced;
-    return advanced;
+    return realSeconds * minutesPerRealSecond;
   }
 
   /** Advance by an exact number of in-game minutes (fast-forward, offline catch-up). */

@@ -346,7 +346,7 @@ export class CameraRig {
 
     // Subtle handheld drift for cinematic/organism views.
     const drift = reducedMotion ? 0 : this.mode === 'cinematic' || this.mode === 'organism' ? 1 : 0.25;
-    const time = world.clock.minutes * 0.01;
+    const time = world.smoothMinutes * 0.01;
     const shake = this.shake;
     this.shake = Math.max(0, this.shake - dt * 1.4);
     this.camera.position.set(

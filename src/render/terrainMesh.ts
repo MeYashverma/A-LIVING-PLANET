@@ -258,7 +258,7 @@ export class TerrainMesh {
           // Flat water (lakes) has no slope and keeps the global drift.
           vec4 fl = texture2D(uFlowTex, (vWorld.xz + uFlowHalf) / (2.0 * uFlowHalf));
           vec2 fdir = fl.rg * 2.0 - 1.0;
-          vec2 flow = uWind * 0.004 + uFlow + fdir * fl.b * 0.02;
+          vec2 flow = uWind * 0.004 + uFlow + fdir * fl.b * 0.05;
           vec2 uv1 = vUv * 0.32 + flow * uTime * 3.0;
           vec2 uv2 = vUv * 0.11 - flow * uTime * 1.7 + vec2(0.37, 0.11);
           vec3 n1 = texture2D(uNormalMap, uv1).xyz * 2.0 - 1.0;
@@ -298,6 +298,16 @@ export class TerrainMesh {
           float sunHit = max(dot(R, normalize(uSunDir)), 0.0);
           sky += uSunColor * (pow(sunHit, 900.0) * 6.0 + pow(sunHit, 60.0) * 0.25);
           vec3 colour = mix(base, sky, clamp(fres * 1.15 + 0.08, 0.0, 0.92));
+
+          // Flow made visible: light streaks carried downhill on wet slopes.
+          // They are stretched along the flow and stronger where it is steep.
+          vec4 flw = texture2D(uFlowTex, (vWorld.xz + uFlowHalf) / (2.0 * uFlowHalf));
+          vec2 fd = flw.rg * 2.0 - 1.0;
+          vec2 fdn = fd / max(length(fd), 1e-3);
+          vec2 fAcross = vec2(-fdn.y, fdn.x);
+          float streakNoise = texture2D(uFoamMap, vec2(dot(vWorld.xz, fAcross) * 0.045, dot(vWorld.xz, fdn) * 0.012 - uTime * 0.22)).r;
+          float streakMask = smoothstep(0.56, 0.86, streakNoise) * clamp(flw.b * 3.0, 0.0, 1.0) * smoothstep(0.02, 0.15, vDepth);
+          colour = mix(colour, colour * 1.3 + vec3(0.05), streakMask * 0.5);
 
           // Sun glint from a tight highlight lobe, widened when the wind
           // roughens the surface.

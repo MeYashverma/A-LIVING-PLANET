@@ -343,36 +343,52 @@ export class World {
   /** Advance the world by real time. Returns simulated minutes advanced. */
   update(realSeconds: number): number {
     const started = performance.now();
-    const target = this.clock.update(realSeconds);
-    if (target <= 0) return 0;
-    let remaining = Math.min(target, TIME.maxMinutesPerFrame);
+    const owed = Math.min(this.clock.minutesOwed(realSeconds), TIME.maxMinutesPerFrame);
+    // Whole steps only. A frame at 1x owes about 0.017 minutes, and running a
+    // full step for each frame's sliver of time cost a step per frame. Time
+    // accumulates here instead, so a step runs once per simulated step.
+    this.owedMinutes += owed;
+    const stepLen = this.stepLength();
     let steps = 0;
     const budgetMs = 9;
-    while (remaining > 0.001) {
-      const dt = Math.min(SIM.stepMinutes * (this.clock.speed > 40 ? 2 : 1), remaining);
-      this.step(dt);
-      remaining -= dt;
+    while (this.owedMinutes >= stepLen - 1e-9) {
+      this.step(stepLen);
+      this.owedMinutes -= stepLen;
       steps++;
       if (steps > 6 && performance.now() - started > budgetMs) {
-        // If we cannot keep up, drop the remaining time rather than stalling the
-        // frame: the clock is corrected on the next tick.
+        // If we cannot keep up, drop the rest of the owed time rather than
+        // stalling the frame: the clock falls behind a little, not forever.
         break;
       }
       if (steps > 180) break;
     }
+    this.owedMinutes = Math.min(this.owedMinutes, stepLen);
     this.stats.stepsThisFrame = steps;
     this.stats.simMs = performance.now() - started;
     this.lastSimMs = this.stats.simMs;
-    this.stats.simMinutesPerSecond = this.stats.simMs > 0 ? (target / this.stats.simMs) * 1000 : 0;
-    return target - remaining;
+    this.stats.simMinutesPerSecond = this.stats.simMs > 0 ? (owed / this.stats.simMs) * 1000 : 0;
+    return owed;
   }
 
-  /** Fraction of the way between the last two simulation steps (0..1), for rendering. */
+  private owedMinutes = 0;
+
+  /**
+   * In-game time for the renderer. The clock only moves in whole steps, so this
+   * adds the time owed but not yet stepped: sky, water and wind animation then
+   * move every frame, not once a second.
+   */
+  get smoothMinutes(): number {
+    return this.clock.minutes + this.owedMinutes;
+  }
+
+  /** Length of one simulation step at the current speed, in in-game minutes. */
+  private stepLength(): number {
+    return SIM.stepMinutes * (this.clock.speed > 40 ? 2 : 1);
+  }
+
+  /** Fraction of the way from the last simulation step to the next (0..1), for rendering. */
   get frameAlpha(): number {
-    const step = SIM.stepMinutes;
-    const frac = ((this.clock.minutes % step) + step) % step;
-    const scaled = frac / step;
-    return this.stats.stepsThisFrame > 1 ? Math.min(1, scaled * this.stats.stepsThisFrame) : scaled;
+    return Math.min(1, Math.max(0, this.owedMinutes / this.stepLength()));
   }
 
   /** Advance simulation by an exact number of minutes (fast-forward, catch-up). */

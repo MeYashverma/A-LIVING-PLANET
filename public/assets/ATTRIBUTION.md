@@ -54,10 +54,13 @@ to give attribution, though it is appreciated."* The CC0 1.0 deed is at
 | `reyneke/goat.glb` (game species: goat) | Goat, realistic mesh by **hendrikReyneke** on Sketchfab (<https://sketchfab.com/3d-models/goat-2624ac2ce2364930ba2d5f70eb7aa1ea>), rigged and animated in this repository (`tools/animal_models/rig_goat.py`: skeleton, skin weights, clips Idle, Walk, Gallop, Eating, Death). Mesh and texture unchanged. Source copy taken from `tot-ra/rebel-reval` (`assets/animals/hendrik_reyneke/goat/goat.glb`) | CC BY 4.0 (attribution required; changes: rigged and animated) |
 | `molochdadev/bear.glb` (game species: bear) | Bear, low-poly mesh by **molochdadev**, Poly Pizza (<https://poly.pizza/u/molochdadev>), copy from `yinasaurus/hack-for-humanity` (`mobile/assets/characters/bear.glb`). Rigged and animated in this repository (`tools/animal_models/rig_goat.py`, `RIG_TARGET=bear`): skeleton, skin weights, clips Idle, Walk, Gallop, Eating, Death | CC BY 4.0 (attribution required; changes: rigged and animated) |
 
+| `storybook/hare.glb` (game species: rabbit) | Rabbit / hare, low-poly mesh by **Dakota.Hinkle**, Sketchfab (<https://sketchfab.com/3d-models/rabbit-073eef14ae3c4d06808498c3ba895e67>). A long-eared lagomorph proxy, not a species-exact European hare. Copy taken from `tot-ra/rebel-reval` (`assets/storybook/hare/hare.glb`), which processed the source (textures capped, rig and six clips Alert, Graze, Idle, LookAround, Run, Walk). The source's SHA-256 is recorded there; the processed copy's hash was not checked against it. A Death clip is added at load time (`addDeathClip` in `src/render/skinnedAnimals.ts`) | CC BY 4.0 (attribution required; changes: rig, clips, Death clip added) |
+
 The Quaternius licence is in `public/assets/models/quaternius/QUATERNIUS-LICENSE.txt`.
 
 Generated animal models (`public/assets/models/animals/`: rabbit, deer, wolf, lynx,
-bison, goat, bear) come from `tools/animal_models/build_animals.py` in this repository.
+bison, goat, bear; the rabbit now uses the hare above, and bison and lynx have no realistic
+licence-checked source yet) come from `tools/animal_models/build_animals.py` in this repository.
 They are procedural, and are the fallback when a Quaternius model fails to load.
 
 ## Third-party software

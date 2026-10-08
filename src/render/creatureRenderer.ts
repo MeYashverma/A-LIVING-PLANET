@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { clamp, clamp01, lerp, TAU } from '../core/math';
 import type { Creatures } from '../life/organism';
 import { SPECIES, type Morphology } from '../life/species';
-import { SkinnedAnimals } from './skinnedAnimals';
+import { SkinnedAnimals, addDeathClip } from './skinnedAnimals';
 import { buildRiggedAnimal, loadGeneratedRig } from './proceduralRig';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
@@ -17,6 +17,9 @@ const QUATERNIUS: Partial<Record<string, { url: string; clips: { idle: string; w
   wolf: { url: 'assets/models/quaternius/wolf.glb', clips: { idle: 'Idle', walk: 'Walk', run: 'Gallop', rest: 'Eating', die: 'Death', bite: 'Attack' } },
   goat: { url: 'assets/models/reyneke/goat.glb', clips: { idle: 'Idle', walk: 'Walk', run: 'Gallop', rest: 'Idle', die: 'Death', bite: 'Eating' } },
   bear: { url: 'assets/models/molochdadev/bear.glb', clips: { idle: 'Idle', walk: 'Walk', run: 'Gallop', rest: 'Idle', die: 'Death', bite: 'Eating' } },
+  // Hare (CC BY 4.0, Dakota.Hinkle, Sketchfab): a long-eared lagomorph standing in for the rabbit.
+  // Its own clips have no Death, so one is added at load time (addDeathClip).
+  rabbit: { url: 'assets/models/storybook/hare.glb', clips: { idle: 'Idle', walk: 'Walk', run: 'Run', rest: 'LookAround', die: 'Death', bite: 'Graze' } },
 };
 import { RENDER } from '../core/config';
 import type { World } from '../world/world';
@@ -1349,7 +1352,10 @@ export class CreatureRenderer {
       // Real CC0 model by Quaternius first (public/assets/models/quaternius).
       const q = QUATERNIUS[key];
       if (q) {
-        new GLTFLoader().loadAsync(q.url).then((gltf) => this.skinned.addRigged(key, gltf.scene, gltf.animations, q.clips), (err) => {
+        new GLTFLoader().loadAsync(q.url).then((gltf) => {
+          if (key === 'rabbit') addDeathClip(gltf.animations, 'Body');
+          this.skinned.addRigged(key, gltf.scene, gltf.animations, q.clips);
+        }, (err) => {
           console.warn(`[rig] Quaternius ${key} failed, using generated`, err);
           generated();
         });
@@ -1438,7 +1444,7 @@ export class CreatureRenderer {
 
     for (const m of this.meshes) {
       m.end();
-      m.updateUniforms(world.clock.minutes * 0.02, snowCover, night);
+      m.updateUniforms(world.smoothMinutes * 0.02, snowCover, night);
     }
     this.skinnedSkip.clear();
   }
