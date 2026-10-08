@@ -122,7 +122,7 @@ export class TerrainMesh {
       uSkyColor: { value: new THREE.Color(0x8fb6dd) },
       uShallow: { value: new THREE.Color(0x3f7a78) },
       uDeep: { value: new THREE.Color(0x081c2c) },
-      uWave: { value: 0.35 },
+      uWave: { value: 0.7 },
       uWind: { value: new THREE.Vector2(0.4, 0.2) },
       uFoam: { value: 0.6 },
       uRain: { value: 0 },
@@ -152,19 +152,25 @@ export class TerrainMesh {
         varying vec2 vUv;
         void main() {
           vec3 p = position;
-          // Long swells travel with the wind; their amplitude grows with fetch
-          // and depth so a shallow run is nearly flat and open water is not.
-          float amp = uWave * (0.04 + clamp(aDepth, 0.0, 3.0) * 0.05);
+          // Three wave trains from long swell to short chop. Wavelengths of
+          // roughly 3 to 12 m make the surface read as water from a distance;
+          // the earlier 15 to 60 m swells were too long to see at play scale.
+          // Amplitude grows with depth, so the shallows stay calm.
+          float amp = uWave * (0.05 + clamp(aDepth, 0.0, 3.0) * 0.05);
           vec2 dir = normalize(uWind + vec2(0.001));
-          float k1 = dot(p.xz, dir) * 0.11 + uTime * 0.9;
-          float k2 = dot(p.xz, vec2(-dir.y, dir.x)) * 0.17 - uTime * 0.6;
-          float k3 = dot(p.xz, dir) * 0.31 + uTime * 1.7;
-          p.y += sin(k1) * amp + sin(k2) * amp * 0.6 + sin(k3) * amp * 0.28;
-          vec3 n = normalize(vec3(
-            -cos(k1) * amp * 0.11 * dir.x - cos(k2) * amp * 0.17 * -dir.y - cos(k3) * amp * 0.31 * dir.x,
-            1.0,
-            -cos(k1) * amp * 0.11 * dir.y - cos(k2) * amp * 0.17 * dir.x - cos(k3) * amp * 0.31 * dir.y
-          ));
+          vec2 dirB = vec2(-dir.y, dir.x);
+          vec2 dirC = normalize(dir + vec2(0.55, -0.8));
+          float k1 = dot(p.xz, dir) * 0.9 + uTime * 1.6;
+          float k2 = dot(p.xz, dirB) * 1.3 - uTime * 1.1;
+          float k3 = dot(p.xz, dirC) * 2.4 + uTime * 2.3;
+          float a1 = amp;
+          float a2 = amp * 0.6;
+          float a3 = amp * 0.3;
+          p.y += sin(k1) * a1 + sin(k2) * a2 + sin(k3) * a3;
+          // Analytic slope of the same sum gives the surface normal.
+          float dhdx = cos(k1) * a1 * 0.9 * dir.x + cos(k2) * a2 * 1.3 * dirB.x + cos(k3) * a3 * 2.4 * dirC.x;
+          float dhdz = cos(k1) * a1 * 0.9 * dir.y + cos(k2) * a2 * 1.3 * dirB.y + cos(k3) * a3 * 2.4 * dirC.y;
+          vec3 n = normalize(vec3(-dhdx, 1.0, -dhdz));
           vDepth = aDepth;
           vWorld = p;
           vNormalW = n;
@@ -194,10 +200,10 @@ export class TerrainMesh {
          */
         vec3 rippleNormal(vec3 N, vec3 viewDir) {
           float dist = length(cameraPosition - vWorld);
-          float fade = 1.0 - smoothstep(60.0, 240.0, dist);
+          float fade = 1.0 - smoothstep(90.0, 320.0, dist);
           vec2 flow = uWind * 0.004 + uFlow;
-          vec2 uv1 = vUv * 0.055 + flow * uTime;
-          vec2 uv2 = vUv * 0.021 - flow * uTime * 1.7 + vec2(0.37, 0.11);
+          vec2 uv1 = vUv * 0.32 + flow * uTime * 3.0;
+          vec2 uv2 = vUv * 0.11 - flow * uTime * 1.7 + vec2(0.37, 0.11);
           vec3 n1 = texture2D(uNormalMap, uv1).xyz * 2.0 - 1.0;
           vec3 n2 = texture2D(uNormalMap, uv2).xyz * 2.0 - 1.0;
           vec3 detail = normalize(vec3(n1.xy * 0.75 + n2.xy * 0.5, 1.0));
@@ -217,8 +223,15 @@ export class TerrainMesh {
           // Fresnel, with water's real reflectance at normal incidence.
           float cosI = clamp(dot(viewDir, N), 0.0, 1.0);
           float fres = 0.02 + 0.98 * pow(1.0 - cosI, 5.0);
-          vec3 sky = uSkyColor;
-          vec3 colour = mix(base, sky, clamp(fres * 1.15, 0.0, 0.92));
+          // Reflection: a sky gradient that is paler at the horizon and a sun
+          // disc where the reflected ray meets the sun, as on a real lake.
+          vec3 R = reflect(-viewDir, N);
+          vec3 zenith = uSkyColor * 0.85;
+          vec3 horizon = mix(uSkyColor, vec3(0.92, 0.94, 0.95), 0.55);
+          vec3 sky = mix(horizon, zenith, pow(clamp(R.y, 0.0, 1.0), 0.45));
+          float sunHit = max(dot(R, normalize(uSunDir)), 0.0);
+          sky += uSunColor * (pow(sunHit, 900.0) * 6.0 + pow(sunHit, 60.0) * 0.25);
+          vec3 colour = mix(base, sky, clamp(fres * 1.15 + 0.08, 0.0, 0.92));
 
           // Sun glint from a tight highlight lobe, widened when the wind
           // roughens the surface.
@@ -242,6 +255,10 @@ export class TerrainMesh {
           // Shallow water is clear enough to show the bed; deep water is opaque.
           // (Was inverted: deep water came out more transparent than shallow.)
           float alpha = mix(uOpacity * 0.6, min(0.97, uOpacity + 0.06), depth);
+          // The water's edge is a depth contour, but the mesh is still built on
+          // a grid. Fading alpha over the first few centimetres of depth hides
+          // that grid: the water thins into the bank rather than ending on it.
+          alpha *= smoothstep(0.015, 0.2, vDepth);
           gl_FragColor = vec4(colour, clamp(alpha + foam * 0.4, 0.0, 1.0));
           #include <fog_fragment>
         }
@@ -451,7 +468,7 @@ export class TerrainMesh {
     (u.uSkyColor.value as THREE.Color).copy(skyColor);
     u.uTime.value += dtSeconds;
     (u.uWind.value as THREE.Vector2).set(Math.cos(windDir) * windSpeed, Math.sin(windDir) * windSpeed);
-    u.uWave.value = 0.16 + clamp(windSpeed, 0, 20) * 0.055;
+    u.uWave.value = 0.35 + clamp(windSpeed, 0, 20) * 0.09;
     u.uFoam.value = 0.42 + clamp01(windSpeed / 18) * 0.5;
     u.uRain.value = clamp01(rain);
     // Rain and wind stir the surface; the ripples run downstream of the wind.
