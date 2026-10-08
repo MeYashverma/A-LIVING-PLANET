@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>A Living Planet</title>
+    <meta
+      name="description"
+      content="A procedural ecosystem simulation: terrain, weather, plants, herbivores, predators, disease and evolution, all running from real state."
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0e1114" />
+    <style>
+      #boot {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        background: #0e1114;
+        color: #e6e2d8;
+        font: 14px/1.5 Inter, system-ui, sans-serif;
+        z-index: 100;
+        transition: opacity 0.4s ease;
+      }
+      #boot .boot-title {
+        font-size: 22px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: #e6e2d8;
+      }
+      #boot .boot-sub {
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+        letter-spacing: 0.1em;
+        color: #9aa3a9;
+        text-transform: uppercase;
+      }
+      #boot .boot-bar {
+        width: min(340px, 60vw);
+        height: 3px;
+        background: #1b2127;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      #boot .boot-bar > i {
+        display: block;
+        height: 100%;
+        width: 4%;
+        background: #c8873c;
+        transition: width 0.3s ease;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="viewport"></div>
+      <div id="boot">
+        <div class="boot-title">A Living Planet</div>
+        <div class="boot-sub" id="boot-sub">generating terrain…</div>
+        <div class="boot-bar"><i id="boot-bar"></i></div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

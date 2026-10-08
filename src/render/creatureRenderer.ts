@@ -1,0 +1,722 @@
+import * as THREE from 'three';
+import { clamp, clamp01, lerp, TAU } from '../core/math';
+import type { Creatures } from '../life/organism';
+import { SPECIES, type Morphology } from '../life/species';
+import { RENDER } from '../core/config';
+import type { World } from '../world/world';
+
+/** Body parts the vertex shader animates. */
+const PART = {
+  body: 0,
+  legFL: 1,
+  legFR: 2,
+  legRL: 3,
+  legRR: 4,
+  head: 5,
+  tail: 6,
+  wingL: 7,
+  wingR: 8,
+  fin: 9,
+  earL: 10,
+  earR: 11,
+}
+
+interface Piece {
+  geo: THREE.BufferGeometry;
+  part: number;
+  pivot: THREE.Vector3;
+  color: [number, number, number];
+}
+
+function paint(geo: THREE.BufferGeometry, color: [number, number, number], variance = 0.06, seed = 1): THREE.BufferGeometry {
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+  const colors = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    // A little per-vertex variation keeps flat colours from looking plastic.
+    const v = 1 + (Math.sin(i * 12.9898 + seed * 78.233) % 1) * variance * 2 - variance;
+    colors[i * 3] = clamp01(color[0] * v);
+    colors[i * 3 + 1] = clamp01(color[1] * v);
+    colors[i * 3 + 2] = clamp01(color[2] * v);
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  return geo;
+}
+
+function tag(geo: THREE.BufferGeometry, part: number, pivot: THREE.Vector3): THREE.BufferGeometry {
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+  const parts = new Float32Array(pos.count).fill(part);
+  const pivots = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    pivots[i * 3] = pivot.x;
+    pivots[i * 3 + 1] = pivot.y;
+    pivots[i * 3 + 2] = pivot.z;
+  }
+  geo.setAttribute('aPart', new THREE.BufferAttribute(parts, 1));
+  geo.setAttribute('aPivot', new THREE.BufferAttribute(pivots, 3));
+  return geo;
+}
+
+function mergePieces(pieces: Piece[]): THREE.BufferGeometry {
+  let vCount = 0;
+  let iCount = 0;
+  for (const p of pieces) {
+    const n = (p.geo.getAttribute('position') as THREE.BufferAttribute).count;
+    vCount += n;
+    iCount += p.geo.index ? p.geo.index.count : n;
+  }
+  const pos = new Float32Array(vCount * 3);
+  const nor = new Float32Array(vCount * 3);
+  const col = new Float32Array(vCount * 3);
+  const part = new Float32Array(vCount);
+  const piv = new Float32Array(vCount * 3);
+  const idx = new Uint32Array(iCount);
+  let vo = 0;
+  let io = 0;
+  for (const p of pieces) {
+    const g = p.geo;
+    const pp = g.getAttribute('position') as THREE.BufferAttribute;
+    const pn = g.getAttribute('normal') as THREE.BufferAttribute | undefined;
+    const pc = g.getAttribute('color') as THREE.BufferAttribute | undefined;
+    const pa = g.getAttribute('aPart') as THREE.BufferAttribute | undefined;
+    const pv = g.getAttribute('aPivot') as THREE.BufferAttribute | undefined;
+    pos.set(pp.array as Float32Array, vo * 3);
+    if (pn) nor.set(pn.array as Float32Array, vo * 3);
+    // A piece may arrive unpainted/untagged (raw merged primitives); fall back
+    // to its own colour and pivot so nothing has to know how it was built.
+    if (pc) col.set(pc.array as Float32Array, vo * 3);
+    else for (let i = 0; i < pp.count; i++) {
+      col[(vo + i) * 3] = p.color[0];
+      col[(vo + i) * 3 + 1] = p.color[1];
+      col[(vo + i) * 3 + 2] = p.color[2];
+    }
+    if (pa) part.set(pa.array as Float32Array, vo);
+    else part.fill(p.part, vo, vo + pp.count);
+    if (pv) piv.set(pv.array as Float32Array, vo * 3);
+    else for (let i = 0; i < pp.count; i++) {
+      piv[(vo + i) * 3] = p.pivot.x;
+      piv[(vo + i) * 3 + 1] = p.pivot.y;
+      piv[(vo + i) * 3 + 2] = p.pivot.z;
+    }
+    if (g.index) {
+      for (let i = 0; i < g.index.count; i++) idx[io + i] = g.index.getX(i) + vo;
+      io += g.index.count;
+    } else {
+      for (let i = 0; i < pp.count; i++) idx[io + i] = i + vo;
+      io += pp.count;
+    }
+    vo += pp.count;
+    g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  out.setAttribute('aPart', new THREE.BufferAttribute(part, 1));
+  out.setAttribute('aPivot', new THREE.BufferAttribute(piv, 3));
+  out.setIndex(new THREE.BufferAttribute(idx, 1));
+  return out;
+}
+
+/** Simple capsule-ish body: a stretched low-poly sphere with a rounded back. */
+function bodyGeo(rx: number, ry: number, rz: number, seg = 8): THREE.BufferGeometry {
+  const g = new THREE.SphereGeometry(1, seg, Math.max(4, seg / 2));
+  g.scale(rx, ry, rz);
+  return g;
+}
+
+function legGeo(from: THREE.Vector3, to: THREE.Vector3, thickness: number, segments = 2): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(thickness * 0.75, thickness * 0.5, 1, 5, segments);
+  const dir = new THREE.Vector3().subVectors(to, from);
+  const len = dir.length();
+  g.translate(0, 0.5, 0);
+  g.scale(1, len, 1);
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+  g.applyQuaternion(q);
+  g.translate(from.x, from.y, from.z);
+  // A hoof/foot pad.
+  const foot = new THREE.SphereGeometry(thickness * 0.75, 5, 3);
+  foot.scale(1, 0.6, 1.1);
+  foot.translate(to.x, to.y - thickness * 0.3, to.z);
+  return mergeRaw([g, foot]);
+}
+
+/** Merge sub-geometries that may not yet carry colour/part attributes. */
+function mergeRaw(geos: THREE.BufferGeometry[], color: [number, number, number] = [1, 1, 1]): THREE.BufferGeometry {
+  const pivot = new THREE.Vector3();
+  const pieces: Piece[] = geos.map((g) => {
+    if (!g.getAttribute('normal')) g.computeVertexNormals();
+    if (!g.getAttribute('color')) paint(g, color, 0.05, 71);
+    if (!g.getAttribute('aPart')) tag(g, PART.body, pivot);
+    return { geo: g, part: PART.body, pivot, color };
+  });
+  return mergePieces(pieces);
+}
+
+/** Quadruped: body, neck, head, ears, four legs, tail, optional headgear. */
+function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
+  const pieces: Piece[] = [];
+  const stand = m.standHeight;
+  const bl = m.bodyLength;
+  const girth = m.bodyGirth;
+  const bodyY = stand;
+
+  const body = paint(bodyGeo(bl * 0.5, girth * 0.75, girth, detail ? 10 : 6), m.fur, 0.08, 3);
+  body.translate(0, bodyY, 0);
+  pieces.push({ geo: tag(body, PART.body, new THREE.Vector3(0, bodyY, 0)), part: PART.body, pivot: new THREE.Vector3(0, bodyY, 0), color: m.fur });
+
+  // Chest and belly shading.
+  const belly = paint(bodyGeo(bl * 0.42, girth * 0.55, girth * 0.9, 6), m.belly, 0.05, 7);
+  belly.translate(bl * 0.06, bodyY - girth * 0.28, 0);
+  pieces.push({ geo: tag(belly, PART.body, new THREE.Vector3()), part: PART.body, pivot: new THREE.Vector3(), color: m.belly });
+
+  // Neck + head pivot at the shoulders.
+  const neckPivot = new THREE.Vector3(bl * 0.42, bodyY + girth * 0.35, 0);
+  const neckLen = m.neck + m.headSize * 0.5;
+  const neck = paint(new THREE.CylinderGeometry(m.headSize * 0.32, girth * 0.5, 1, detail ? 7 : 5), m.fur, 0.06, 11);
+  neck.scale(1, neckLen, 1);
+  neck.translate(neckPivot.x, neckPivot.y, 0);
+  const neckDir = new THREE.Vector3(1, 0.45, 0).normalize();
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), neckDir);
+  neck.applyQuaternion(q);
+  neck.translate(0, 0, 0);
+  pieces.push({ geo: tag(neck, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.fur });
+
+  const headPos = new THREE.Vector3(neckPivot.x + neckDir.x * neckLen, neckPivot.y + neckDir.y * neckLen, 0);
+  const head = paint(bodyGeo(m.headSize * 0.85, m.headSize * 0.7, m.headSize * 0.7, detail ? 8 : 5), m.fur, 0.06, 13);
+  head.translate(headPos.x, headPos.y, 0);
+  pieces.push({ geo: tag(head, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.fur });
+
+  // Muzzle.
+  const muzzle = paint(new THREE.CylinderGeometry(m.headSize * 0.3, m.headSize * 0.42, m.headSize * 0.8, 6), m.accent, 0.05, 17);
+  const mq = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, -0.15, 0).normalize());
+  muzzle.applyQuaternion(mq);
+  muzzle.translate(headPos.x + m.headSize * 0.85, headPos.y - m.headSize * 0.1, 0);
+  pieces.push({ geo: tag(muzzle, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.accent });
+
+  // Ears.
+  if (m.earSize > 0.03 && detail) {
+    for (const side of [-1, 1]) {
+      const ear = paint(new THREE.ConeGeometry(m.earSize * 0.32, m.earSize * 1.5, 5), m.fur, 0.06, 19);
+      ear.rotateZ(-0.25 * side);
+      ear.rotateX(0.3);
+      ear.translate(headPos.x - m.headSize * 0.1, headPos.y + m.headSize * 0.7, side * m.headSize * 0.42);
+      pieces.push({ geo: tag(ear, side < 0 ? PART.earL : PART.earR, neckPivot), part: side < 0 ? PART.earL : PART.earR, pivot: neckPivot, color: m.fur });
+    }
+  }
+
+  // Headgear: antlers, horns, mane.
+  if (m.headgear === 'antlers' && detail) {
+    for (const side of [-1, 1]) {
+      for (let branch = 0; branch < 2; branch++) {
+        const tine = paint(new THREE.CylinderGeometry(0.045, 0.06, m.headSize * 2.4, 4), m.accent, 0.05, 23);
+        tine.translate(0, m.headSize * 1.2, 0);
+        tine.rotateZ(side * (0.5 + branch * 0.35));
+        tine.rotateX(branch === 0 ? 0.2 : -0.5);
+        tine.translate(headPos.x - m.headSize * 0.2, headPos.y + m.headSize * 0.75, side * m.headSize * 0.28);
+        pieces.push({ geo: tag(tine, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.accent });
+      }
+    }
+  } else if (m.headgear === 'horns' && detail) {
+    for (const side of [-1, 1]) {
+      const horn = paint(new THREE.CylinderGeometry(0.05, 0.08, m.headSize * 1.2, 5), m.accent, 0.05, 29);
+      horn.translate(0, m.headSize * 0.6, 0);
+      horn.rotateZ(side * 0.7);
+      horn.translate(headPos.x - m.headSize * 0.2, headPos.y + m.headSize * 0.5, side * m.headSize * 0.4);
+      pieces.push({ geo: tag(horn, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.accent });
+    }
+  } else if (m.headgear === 'mane' && detail) {
+    const mane = paint(bodyGeo(m.headSize * 1.15, m.headSize * 0.9, m.headSize * 1.05, 8), m.accent, 0.08, 31);
+    mane.translate(headPos.x - m.headSize * 0.1, headPos.y, 0);
+    pieces.push({ geo: tag(mane, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.accent });
+  }
+
+  // Legs.
+  const shoulder = new THREE.Vector3(bl * 0.33, bodyY - girth * 0.25, girth * 0.72);
+  const hip = new THREE.Vector3(-bl * 0.33, bodyY - girth * 0.3, girth * 0.72);
+  const legs: [number, THREE.Vector3][] = [
+    [PART.legFL, new THREE.Vector3(shoulder.x, shoulder.y, shoulder.z)],
+    [PART.legFR, new THREE.Vector3(shoulder.x, shoulder.y, -shoulder.z)],
+    [PART.legRL, new THREE.Vector3(hip.x, hip.y, hip.z)],
+    [PART.legRR, new THREE.Vector3(hip.x, hip.y, -hip.z)],
+  ];
+  const lowerLen = Math.max(0.04, bodyY - girth * 0.45);
+  for (const [part, start] of legs) {
+    const mid = new THREE.Vector3(start.x, start.y - lowerLen * 0.5, start.z);
+    const end = new THREE.Vector3(start.x, 0.02, start.z);
+    if (detail) {
+      const upper = paint(legGeo(start.clone(), mid.clone(), girth * 0.16), m.accent, 0.05, part * 3);
+      const lower = paint(legGeo(mid.clone(), end.clone(), girth * 0.12), m.accent, 0.05, part * 5);
+      pieces.push({ geo: tag(mergeRaw([upper]), part, start.clone()), part, pivot: start.clone(), color: m.accent });
+      // The lower leg rotates with the whole limb from the hip, which is
+      // visually correct at the distances this world is watched from.
+      pieces.push({ geo: tag(mergeRaw([lower]), part, start.clone()), part, pivot: start.clone(), color: m.accent });
+    } else {
+      const leg = paint(legGeo(start.clone(), end.clone(), girth * 0.15, 1), m.accent, 0.05, part * 7);
+      pieces.push({ geo: tag(mergeRaw([leg]), part, start.clone()), part, pivot: start.clone(), color: m.accent });
+    }
+  }
+
+  // Tail.
+  if (m.tailLength > 0.02) {
+    const tailPivot = new THREE.Vector3(-bl * 0.5, bodyY + girth * 0.2, 0);
+    const tail = paint(new THREE.CylinderGeometry(m.headSize * 0.14, m.headSize * 0.2, m.tailLength, 5), m.fur, 0.06, 37);
+    tail.translate(0, m.tailLength * 0.5, 0);
+    tail.rotateZ(-1.1);
+    tail.translate(tailPivot.x, tailPivot.y, 0);
+    pieces.push({ geo: tag(tail, PART.tail, tailPivot), part: PART.tail, pivot: tailPivot, color: m.fur });
+  }
+
+  const merged = mergePieces(pieces);
+  applyPattern(merged, m);
+  return merged;
+}
+
+/** Bird: body, head+beak, tail fan, wings. */
+function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry {
+  const pieces: Piece[] = [];
+  const stand = m.standHeight;
+  const bl = m.bodyLength;
+  const girth = m.bodyGirth;
+
+  const body = paint(bodyGeo(bl * 0.5, girth * 0.85, girth, detail ? 10 : 6), m.fur, 0.07, 41);
+  body.translate(0, stand, 0);
+  pieces.push({ geo: tag(body, PART.body, new THREE.Vector3()), part: PART.body, pivot: new THREE.Vector3(), color: m.fur });
+
+  const belly = paint(bodyGeo(bl * 0.4, girth * 0.6, girth * 0.85, 6), m.belly, 0.05, 43);
+  belly.translate(bl * 0.04, stand - girth * 0.3, 0);
+  pieces.push({ geo: tag(belly, PART.body, new THREE.Vector3()), part: PART.body, pivot: new THREE.Vector3(), color: m.belly });
+
+  const headPivot = new THREE.Vector3(bl * 0.42, stand + girth * 0.35, 0);
+  const head = paint(bodyGeo(m.headSize * 0.8, m.headSize * 0.75, m.headSize * 0.75, detail ? 8 : 5), m.fur, 0.05, 47);
+  head.translate(headPivot.x + m.headSize * 0.3, headPivot.y, 0);
+  pieces.push({ geo: tag(head, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.fur });
+
+  const beak = paint(new THREE.ConeGeometry(m.headSize * 0.22, m.headSize * 0.9, 5), m.accent, 0.04, 53);
+  beak.rotateZ(-Math.PI / 2);
+  beak.translate(headPivot.x + m.headSize * 1.1, headPivot.y, 0);
+  pieces.push({ geo: tag(beak, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.accent });
+
+  // Tail fan.
+  const tailPivot = new THREE.Vector3(-bl * 0.45, stand + girth * 0.1, 0);
+  const tail = paint(new THREE.BoxGeometry(m.tailLength * 1.6, 0.03, m.tailLength * 1.5), m.fur, 0.06, 59);
+  tail.rotateZ(0.12);
+  tail.translate(tailPivot.x - m.tailLength * 0.8, tailPivot.y, 0);
+  pieces.push({ geo: tag(tail, PART.tail, tailPivot), part: PART.tail, pivot: tailPivot, color: m.fur });
+
+  // Wings: inner and outer panels so the flap reads clearly.
+  const span = m.wingSpan * 0.5;
+  for (const side of [-1, 1]) {
+    const part = side < 0 ? PART.wingL : PART.wingR;
+    const pivot = new THREE.Vector3(bl * 0.05, stand + girth * 0.2, side * girth * 0.5);
+    const inner = paint(new THREE.BoxGeometry(bl * 0.5, 0.035, span * 0.55), m.accent, 0.06, part * 9);
+    inner.translate(pivot.x - bl * 0.1, pivot.y, side * (girth * 0.5 + span * 0.27));
+    pieces.push({ geo: tag(inner, part, pivot), part, pivot, color: m.accent });
+    if (detail) {
+      const outer = paint(new THREE.BoxGeometry(bl * 0.44, 0.03, span * 0.5), m.accent, 0.06, part * 11);
+      outer.rotateY(side * -0.25);
+      outer.translate(pivot.x - bl * 0.3, pivot.y, side * (girth * 0.5 + span * 0.78));
+      pieces.push({ geo: tag(outer, part, pivot), part, pivot, color: m.accent });
+    }
+  }
+
+  const merged = mergePieces(pieces);
+  applyPattern(merged, m);
+  return merged;
+}
+
+/** Fish: fusiform body, tail fin, dorsal fin, side fins. */
+function buildFish(m: Morphology, detail: boolean): THREE.BufferGeometry {
+  const pieces: Piece[] = [];
+  const bl = m.bodyLength;
+  const girth = m.bodyGirth;
+  const body = paint(bodyGeo(bl * 0.5, girth * 0.6, girth * 0.7, detail ? 10 : 6), m.fur, 0.07, 61);
+  pieces.push({ geo: tag(body, PART.body, new THREE.Vector3()), part: PART.body, pivot: new THREE.Vector3(), color: m.fur });
+
+  const belly = paint(bodyGeo(bl * 0.35, girth * 0.4, girth * 0.6, 6), m.belly, 0.05, 67);
+  belly.translate(0, -girth * 0.28, 0);
+  pieces.push({ geo: tag(belly, PART.body, new THREE.Vector3()), part: PART.body, pivot: new THREE.Vector3(), color: m.belly });
+
+  const headPivot = new THREE.Vector3(bl * 0.35, 0, 0);
+  const head = paint(bodyGeo(m.headSize * 0.6, m.headSize * 0.5, m.headSize * 0.55, 6), m.fur, 0.05, 71);
+  head.translate(bl * 0.32, 0, 0);
+  pieces.push({ geo: tag(head, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.fur });
+
+  // Tail fin.
+  const tailPivot = new THREE.Vector3(-bl * 0.42, 0, 0);
+  const tail = paint(new THREE.BoxGeometry(bl * 0.2, girth * 1.5, 0.02), m.accent, 0.06, 73);
+  tail.translate(-bl * 0.5, 0, 0);
+  pieces.push({ geo: tag(tail, PART.tail, tailPivot), part: PART.tail, pivot: tailPivot, color: m.accent });
+
+  if (m.finStyle !== 'none') {
+    const finPivot = new THREE.Vector3(0, girth * 0.5, 0);
+    const fin = paint(new THREE.BoxGeometry(bl * 0.28, girth * 0.9, 0.02), m.accent, 0.06, 79);
+    fin.rotateZ(-0.3);
+    fin.translate(bl * 0.05, girth * 0.55, 0);
+    pieces.push({ geo: tag(fin, PART.fin, finPivot), part: PART.fin, pivot: finPivot, color: m.accent });
+  }
+  if (detail) {
+    for (const side of [-1, 1]) {
+      const fin = paint(new THREE.BoxGeometry(bl * 0.16, 0.02, girth * 0.6), m.accent, 0.05, side * 83 + 90);
+      fin.rotateY(side * 0.4);
+      fin.translate(bl * 0.12, -girth * 0.1, side * girth * 0.5);
+      pieces.push({ geo: tag(fin, PART.fin, new THREE.Vector3(0, 0, 0)), part: PART.fin, pivot: new THREE.Vector3(), color: m.accent });
+    }
+  }
+
+  const merged = mergePieces(pieces);
+  applyPattern(merged, m);
+  return merged;
+}
+
+/** Paint species patterns onto the merged body. */
+function applyPattern(geo: THREE.BufferGeometry, m: Morphology): void {
+  if (m.pattern === 'plain') return;
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+  const col = geo.getAttribute('color') as THREE.BufferAttribute;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    let r = col.getX(i);
+    let g = col.getY(i);
+    let b = col.getZ(i);
+    if (m.pattern === 'spotted') {
+      const s = Math.sin(x * 21.3) * Math.cos(z * 18.7) * Math.sin(y * 15.1);
+      if (s > 0.55) {
+        r *= 0.55;
+        g *= 0.5;
+        b *= 0.45;
+      }
+    } else if (m.pattern === 'striped') {
+      if (Math.sin(x * 26.0) > 0.4) {
+        r *= 0.6;
+        g *= 0.55;
+        b *= 0.5;
+      }
+    } else if (m.pattern === 'dark-ends') {
+      const tip = clamp01((x - m.bodyLength * 0.25) / (m.bodyLength * 0.35));
+      const t = Math.max(tip, clamp01((-x - m.bodyLength * 0.25) / (m.bodyLength * 0.35)));
+      r = lerp(r, r * 0.4, t);
+      g = lerp(g, g * 0.4, t);
+      b = lerp(b, b * 0.42, t);
+    } else if (m.pattern === 'belly-light') {
+      const t = clamp01((0.2 - y) * 1.4);
+      r = lerp(r, 0.85, t * 0.5);
+      g = lerp(g, 0.83, t * 0.5);
+      b = lerp(b, 0.8, t * 0.5);
+    }
+    col.setXYZ(i, clamp01(r), clamp01(g), clamp01(b));
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Shader animation                                                    */
+/* ------------------------------------------------------------------ */
+
+const ANIM_COMMON = /* glsl */ `
+  attribute float aPart;
+  attribute vec3 aPivot;
+  attribute float aPhase;
+  attribute vec4 aAnim; // x = speed01, y = action id, z = health, w = age01
+  uniform float uTime;
+  uniform float uWindLen;
+  uniform float uSnow;
+  uniform float uMoon; // 0 day, 1 night — animals are less active/visible
+  varying vec3 vFur;
+  varying float vHealth;
+  varying float vSnowMix;
+
+  vec3 rotAxis(vec3 p, vec3 pivot, vec3 axis, float angle) {
+    vec3 d = p - pivot;
+    float c = cos(angle);
+    float s = sin(angle);
+    float t = 1.0 - c;
+    vec3 a = normalize(axis);
+    vec3 r = vec3(
+      (t * a.x * a.x + c) * d.x + (t * a.x * a.y - s * a.z) * d.y + (t * a.x * a.z + s * a.y) * d.z,
+      (t * a.x * a.y + s * a.z) * d.x + (t * a.y * a.y + c) * d.y + (t * a.y * a.z - s * a.x) * d.z,
+      (t * a.x * a.z - s * a.y) * d.x + (t * a.y * a.z + s * a.x) * d.y + (t * a.z * a.z + c) * d.z
+    );
+    return pivot + r;
+  }
+`;
+
+const ANIM_BODY = /* glsl */ `
+  vec3 p = transformed;
+  float speed01 = aAnim.x;
+  float ac = aAnim.y;
+  float phase = aPhase * 6.2831 + uTime * (1.2 + speed01 * 7.0);
+  float gait = 0.15 + speed01 * 0.95;
+
+  // Walking / running: legs alternate in diagonal pairs, body bobs and rolls.
+  if (aPart > 0.5 && aPart < 4.5) {
+    float front = (aPart < 2.5) ? 0.0 : 3.1416;
+    float side = (abs(aPart - floor(aPart) - 0.0) < 0.01) ? 0.0 : 3.1416;
+    vec2 pairOffset = vec2(0.0, 3.1416);
+    float off = pairOffset[int(mod(aPart - 1.0, 2.0))];
+    float swing = sin(phase * (0.5 + speed01 * 0.5) + off + front * 0.35 + side * 0.5) * gait * 0.7;
+    p = rotAxis(p, aPivot, vec3(0.0, 0.0, 1.0), swing);
+    // Knee tuck on the back half of the stride.
+    p = rotAxis(p, aPivot + vec3(0.0, -0.25, 0.0), vec3(0.0, 0.0, 1.0), max(0.0, -swing) * 0.8);
+  } else if (aPart > 6.5 && aPart < 8.5) {
+    // Wings.
+    float flap = sin(phase * (0.6 + speed01 * 1.4)) * (0.25 + speed01 * 0.75) * (ac > 1.5 ? 1.0 : 0.35);
+    float side = (aPart < 7.5) ? 1.0 : -1.0;
+    p = rotAxis(p, aPivot, vec3(1.0, 0.0, 0.0), side * flap * 0.9);
+  } else if (aPart > 5.5 && aPart < 6.5) {
+    // Tail sway.
+    p = rotAxis(p, aPivot, vec3(0.0, 1.0, 0.0), sin(phase * 0.7) * 0.25 * (0.4 + speed01));
+  } else if (aPart > 4.5 && aPart < 5.5) {
+    // Head bob and grazing dip: a downward nod that deepens when feeding.
+    float graze = (ac > 3.5 && ac < 5.5) ? 0.55 : 0.0;
+    float nod = sin(phase * 0.6) * 0.08 * (1.0 + speed01) + graze * 0.5;
+    p = rotAxis(p, aPivot, vec3(0.0, 0.0, 1.0), -nod);
+    p = rotAxis(p, aPivot, vec3(0.0, 1.0, 0.0), sin(uTime * 0.5 + aPhase * 6.0) * 0.12);
+  } else if (aPart > 8.5 && aPart < 9.5) {
+    // Fins ripple.
+    p = rotAxis(p, aPivot, vec3(0.0, 0.0, 1.0), sin(phase * 1.4) * 0.2);
+  } else {
+    // Body: bob, lean into the movement, and crouch while resting.
+    float crouch = (ac > 1.5 && ac < 3.0) ? 0.25 : 0.0;
+    p.y += sin(phase * 2.0) * 0.035 * speed01;
+    p.y -= crouch * 0.3;
+    p = rotAxis(p, vec3(0.0, aPivot.y, 0.0), vec3(0.0, 0.0, 1.0), sin(phase) * 0.03 * speed01);
+  }
+  transformed = p;
+  vFur = color;
+  vHealth = aAnim.z;
+  // Winter camouflage blends animals into snow.
+  vSnowMix = uSnow * (1.0 - abs(aAnim.w - 0.45)) * 0.6;
+`;
+
+const ANIM_FRAGMENT = /* glsl */ `
+  // Individual condition: sick, starving or injured animals look it.
+  vec3 sick = vec3(0.55, 0.52, 0.5);
+  diffuseColor.rgb = mix(diffuseColor.rgb, sick, clamp(1.0 - vHealth, 0.0, 1.0) * 0.55);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.92, 0.94, 0.97), clamp(vSnowMix, 0.0, 1.0));
+  // Night desaturation so animals do not glow in the dark.
+  diffuseColor.rgb *= mix(1.0, 0.55, uMoon * 0.7);
+`;
+
+/** A per-species pool of instanced animals, with a near/far LOD split. */
+class SpeciesMesh {
+  readonly near: THREE.InstancedMesh;
+  readonly far: THREE.InstancedMesh;
+  private nearCount = 0;
+  private farCount = 0;
+  private nearAnim: THREE.InstancedBufferAttribute;
+  private farAnim: THREE.InstancedBufferAttribute;
+  private nearPhase: THREE.InstancedBufferAttribute;
+  private farPhase: THREE.InstancedBufferAttribute;
+
+  constructor(readonly speciesIdx: number, geoNear: THREE.BufferGeometry, geoFar: THREE.BufferGeometry, nearCap: number, farCap: number) {
+    const material = (geo: THREE.BufferGeometry) => {
+      const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0 });
+      mat.onBeforeCompile = (shader) => {
+        shader.uniforms.uTime = { value: 0 };
+        shader.uniforms.uSnow = { value: 0 };
+        shader.uniforms.uMoon = { value: 0 };
+        shader.uniforms.uWindLen = { value: 0 };
+        mesh.uniforms.push(shader.uniforms);
+        shader.vertexShader = shader.vertexShader
+          .replace('#include <common>', `#include <common>\n${ANIM_COMMON}`)
+          .replace('#include <begin_vertex>', `#include <begin_vertex>\n${ANIM_BODY}`);
+        shader.fragmentShader = shader.fragmentShader
+          .replace(
+            '#include <common>',
+            `#include <common>\nvarying vec3 vFur;\nvarying float vHealth;\nvarying float vSnowMix;\nuniform float uMoon;`,
+          )
+          .replace('#include <color_fragment>', `#include <color_fragment>\n${ANIM_FRAGMENT}`);
+      };
+      mat.customProgramCacheKey = () => 'creature-v1';
+      void geo;
+      return mat;
+    };
+    const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+    depth.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = { value: 0 };
+      shader.uniforms.uSnow = { value: 0 };
+      shader.uniforms.uMoon = { value: 0 };
+      shader.uniforms.uWindLen = { value: 0 };
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', `#include <common>\n${ANIM_COMMON}`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>\n${ANIM_BODY}`);
+    };
+    depth.customProgramCacheKey = () => 'creature-depth-v1';
+
+    const attach = (mesh: THREE.InstancedMesh, cap: number, detail: boolean) => {
+      const anim = new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4);
+      const phase = new THREE.InstancedBufferAttribute(new Float32Array(cap), 1);
+      anim.setUsage(THREE.DynamicDrawUsage);
+      phase.setUsage(THREE.DynamicDrawUsage);
+      const g = detail ? geoNear : geoFar;
+      g.setAttribute('aAnim', anim);
+      g.setAttribute('aPhase', phase);
+      mesh.castShadow = detail;
+      mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
+      mesh.count = 0;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      return { anim, phase };
+    };
+
+    const mesh = this;
+    this.near = new THREE.InstancedMesh(geoNear, material(geoNear), nearCap);
+    this.far = new THREE.InstancedMesh(geoFar, material(geoFar), farCap);
+    this.near.customDepthMaterial = depth.clone();
+    const nearAttrs = attach(this.near, nearCap, true);
+    const farAttrs = attach(this.far, farCap, false);
+    this.nearAnim = nearAttrs.anim;
+    this.nearPhase = nearAttrs.phase;
+    this.farAnim = farAttrs.anim;
+    this.farPhase = farAttrs.phase;
+  }
+
+  uniforms: Record<string, THREE.IUniform>[] = [];
+  private dummy = new THREE.Object3D();
+
+  begin(): void {
+    this.nearCount = 0;
+    this.farCount = 0;
+  }
+
+  /** Place one animal. Size is already in world units. */
+  add(pos: THREE.Vector3, heading: number, length: number, height: number, speed01: number, action: number, health: number, age01: number, phase: number, near: boolean): void {
+    const d = this.dummy;
+    d.position.copy(pos);
+    d.rotation.set(0, -heading, 0);
+    d.scale.set(length, height, height);
+    d.updateMatrix();
+    if (near && this.nearCount < this.near.instanceMatrix.count) {
+      this.near.setMatrixAt(this.nearCount, d.matrix);
+      this.nearAnim.setXYZW(this.nearCount, speed01, action, health, age01);
+      this.nearPhase.setX(this.nearCount, phase);
+      this.nearCount++;
+    } else if (this.farCount < this.far.instanceMatrix.count) {
+      this.far.setMatrixAt(this.farCount, d.matrix);
+      this.farAnim.setXYZW(this.farCount, speed01, action, health, age01);
+      this.farPhase.setX(this.farCount, phase);
+      this.farCount++;
+    }
+  }
+
+  end(): void {
+    this.near.count = this.nearCount;
+    this.far.count = this.farCount;
+    (this.near.instanceMatrix as THREE.InstancedBufferAttribute).needsUpdate = true;
+    (this.far.instanceMatrix as THREE.InstancedBufferAttribute).needsUpdate = true;
+    this.nearAnim.needsUpdate = true;
+    this.farAnim.needsUpdate = true;
+    this.nearPhase.needsUpdate = true;
+    this.farPhase.needsUpdate = true;
+  }
+
+  updateUniforms(time: number, snow: number, moon: number): void {
+    for (const u of this.uniforms) {
+      u.uTime.value = time;
+      u.uSnow.value = snow;
+      u.uMoon.value = moon;
+      u.uWindLen.value = 0;
+    }
+  }
+
+  dispose(): void {
+    this.near.geometry.dispose();
+    this.far.geometry.dispose();
+    (this.near.material as THREE.Material).dispose();
+    (this.far.material as THREE.Material).dispose();
+  }
+}
+
+/**
+ * Draws the individually simulated animals. The geometry is procedural and the
+ * animation is a function of the simulation's own state: gait length follows
+ * real speed, posture follows the current action, colour follows health, and
+ * winter snow cover bleaches animals that evolved pale fur.
+ */
+export class CreatureRenderer {
+  readonly group = new THREE.Group();
+  private meshes: SpeciesMesh[] = [];
+  private nearCap: number;
+  private farCap: number;
+  private scratch: THREE.Vector3[] = [];
+  private lastPhaseRefresh = 0;
+
+  constructor(private world: World, quality: 'low' | 'medium' | 'high' | 'ultra') {
+    const detailScale = quality === 'low' ? 0.35 : quality === 'medium' ? 0.6 : 1;
+    this.nearCap = Math.max(24, Math.round(70 * detailScale));
+    this.farCap = Math.max(120, Math.round(320 * detailScale));
+    for (let i = 0; i < SPECIES.length; i++) {
+      const m = SPECIES[i].morphology;
+      const build = SPECIES[i].locomotion === 'bird' ? buildBird : SPECIES[i].locomotion === 'fish' ? buildFish : buildQuadruped;
+      const near = build(m, true);
+      const far = quality === 'low' ? near : build(m, false);
+      const mesh = new SpeciesMesh(i, near, far, this.nearCap, this.farCap);
+      this.meshes.push(mesh);
+      // Separate meshes per LOD so the shadow pass can skip distant animals.
+      this.group.add(mesh.near, mesh.far);
+      this.scratch.push(new THREE.Vector3());
+    }
+  }
+
+  /** Rebuild the instance lists for this frame. */
+  update(cameraPos: THREE.Vector3, night: number, snowCover: number): void {
+    const world = this.world;
+    const c: Creatures = world.creatures;
+    const now = performance.now();
+    if (now - this.lastPhaseRefresh > 5000) {
+      this.lastPhaseRefresh = now;
+    }
+    for (const m of this.meshes) m.begin();
+
+    for (let i = 0; i < c.capacity; i++) {
+      if (!c.alive[i]) continue;
+      const spIdx = c.speciesIdx[i];
+      const sp = SPECIES[spIdx];
+      const mesh = this.meshes[spIdx];
+      const scale = c.bodyScale(i);
+      const dist = Math.hypot(c.x[i] - cameraPos.x, c.y[i] - cameraPos.z);
+      const near = dist < RENDER.creatureAnimDistance;
+      // Interpolate between sim steps so movement looks continuous.
+      const alpha = world.frameAlpha;
+      const ix = lerp(c.prevX[i], c.x[i], alpha);
+      const iy = lerp(c.prevY[i], c.y[i], alpha);
+      const heading = lerpAngle(c.prevHeading[i], c.heading[i], alpha);
+      const pos = this.scratch[spIdx];
+      pos.set(ix, c.z[i], iy);
+      const speedMax = Math.max(0.001, sp.runSpeed);
+      const speed01 = clamp01(c.speed[i] / speedMax);
+      const age01 = clamp01(c.ageDays[i] / (sp.maxAgeYears * 365));
+      const health = clamp01(c.health[i]);
+      const actionId = c.action[i];
+      mesh.add(pos, heading, scale, scale, speed01, actionId, health, age01, c.animPhase[i], near);
+    }
+
+    for (const m of this.meshes) {
+      m.end();
+      m.updateUniforms(world.clock.minutes * 0.02, snowCover, night);
+    }
+  }
+
+  countInstances(): { near: number; far: number } {
+    let near = 0;
+    let far = 0;
+    for (const m of this.meshes) {
+      near += m.near.count;
+      far += m.far.count;
+    }
+    return { near, far };
+  }
+
+  dispose(): void {
+    for (const m of this.meshes) m.dispose();
+  }
+}
+
+function lerpAngle(a: number, b: number, t: number): number {
+  let d = b - a;
+  while (d > Math.PI) d -= TAU;
+  while (d < -Math.PI) d += TAU;
+  return a + d * t;
+}
+

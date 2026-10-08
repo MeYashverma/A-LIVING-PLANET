@@ -1,0 +1,21 @@
+{
+  "name": "a-living-planet",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "A Living Planet — a real-time procedural ecosystem simulation and sandbox.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.186.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5"
+  }
+}
