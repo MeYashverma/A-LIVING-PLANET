@@ -593,28 +593,57 @@ export class Panels {
     if (!ctx) return;
     ctx.scale(dpr, dpr);
 
-    // Lay the web out by trophic depth: producers left, apex predators right.
-    const depth = new Map<string, number>();
+    // Lay the web out by trophic level, computed from feeding links only. The
+    // longest-path depth used before counted decomposition, pollination and
+    // symbiosis loops too, so nodes kept climbing levels and piled into a few
+    // columns. Level is the prey-weighted mean level plus one, iterated to a
+    // fixed point, which is how ecologists place consumers on a web.
+    const FEEDING = new Set(['grazing', 'predation', 'scavenging']);
     const edges = web.edges;
-    for (const key of web.nodes) depth.set(key, 1);
-    for (let pass = 0; pass < 6; pass++) {
-      for (const e of edges) depth.set(e.to, Math.max(depth.get(e.to) ?? 0, (depth.get(e.from) ?? 0) + 1));
+    const feeding = web.edges.filter((e) => FEEDING.has(e.kind) && e.weight > 0);
+    const fixed = new Map<string, number>([['sun', 0], ['detritus', 1], ['carrion', 1]]);
+    for (const key of web.nodes) if (key.startsWith('plant_')) fixed.set(key, 1);
+    const level = new Map<string, number>();
+    for (const key of web.nodes) level.set(key, fixed.get(key) ?? 2);
+    for (let iter = 0; iter < 40; iter++) {
+      const sum = new Map<string, number>();
+      const wsum = new Map<string, number>();
+      for (const e of feeding) {
+        if (fixed.has(e.to)) continue;
+        sum.set(e.to, (sum.get(e.to) ?? 0) + (level.get(e.from) ?? 1) * e.weight);
+        wsum.set(e.to, (wsum.get(e.to) ?? 0) + e.weight);
+      }
+      for (const [to, w] of wsum) level.set(to, 1 + (sum.get(to) ?? 0) / w);
     }
     const levels = new Map<number, string[]>();
     for (const key of web.nodes) {
-      const d = depth.get(key) ?? 1;
+      const d = Math.round(level.get(key) ?? 1);
       if (!levels.has(d)) levels.set(d, []);
       levels.get(d)!.push(key);
     }
-    const maxLevel = Math.max(...levels.keys());
+    const maxLevel = Math.max(1, ...levels.keys());
+    // Order each column by the position of its strongest food, so links run
+    // across the diagram instead of crossing through it.
+    const rowOf = new Map<string, number>();
+    const ordered = [...levels.entries()].sort((a, b) => a[0] - b[0]);
+    for (const [, keys] of ordered) {
+      keys.sort((a, b) => {
+        const food = (k: string) => {
+          const prey = feeding.filter((e) => e.to === k).sort((x, y) => y.weight - x.weight)[0];
+          return prey ? rowOf.get(prey.from) ?? 0 : 0;
+        };
+        return food(a) - food(b) || a.localeCompare(b);
+      });
+      keys.forEach((key, i) => rowOf.set(key, i / Math.max(1, keys.length - 1)));
+    }
     this.webLayout = [];
-    for (const [level, keys] of [...levels.entries()].sort((a, b) => a[0] - b[0])) {
+    for (const [d, keys] of ordered) {
       keys.forEach((key, i) => {
-        const x = 40 + (level / Math.max(1, maxLevel)) * (width - 80);
-        const y = ((i + 1) / (keys.length + 1)) * (height - 30) + 15;
+        const x = 46 + (d / maxLevel) * (width - 92);
+        const y = keys.length === 1 ? height / 2 : 22 + (i / (keys.length - 1)) * (height - 44);
         const count = populationOf(world, key);
-        const r = Math.max(4, Math.min(18, 3 + Math.log10(1 + count) * 4));
-        this.webLayout.push({ key, x, y, r, level });
+        const r = Math.max(3, Math.min(9, 2.5 + Math.log10(1 + count) * 2.4));
+        this.webLayout.push({ key, x, y, r, level: d });
       });
     }
 

@@ -240,8 +240,11 @@ export class CameraRig {
     const speed = clamp(this.distance * 0.9, 12, 420) * dt;
     const cos = Math.cos(this.yaw);
     const sin = Math.sin(this.yaw);
-    this.targetFocus.x += (-sin * forward + cos * strafe) * speed;
-    this.targetFocus.z += (cos * forward + sin * strafe) * speed;
+    // The camera sits at focus - (cos, sin) * distance, so the view direction is
+    // (cos, sin) and screen-right is (-sin, cos). Forward and strafe must use
+    // those; they were swapped, which made W slide sideways and D run forward.
+    this.targetFocus.x += (cos * forward - sin * strafe) * speed;
+    this.targetFocus.z += (sin * forward + cos * strafe) * speed;
     const limit = world.terrain.half * 0.95;
     this.targetFocus.x = clamp(this.targetFocus.x, -limit, limit);
     this.targetFocus.z = clamp(this.targetFocus.z, -limit, limit);

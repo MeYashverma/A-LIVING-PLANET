@@ -339,7 +339,11 @@ export class Props {
       if (n >= caps[setIndex]) continue;
       this.dummy.position.set(x, z, y);
       this.dummy.rotation.set(0, (i * 1.37) % TAU, 0);
-      this.dummy.scale.set(radius / TREE_SPECIES[sp].maxRadius, height / TREE_SPECIES[sp].maxHeight, height / TREE_SPECIES[sp].maxHeight);
+      // The tree meshes are built about 1 m tall and 0.4 m wide at unit scale.
+      // Scaling them by height / maxHeight drew a 26 m tree at about 1 m.
+      // Scale to the simulated height and crown radius instead.
+      const crown = sp === 0 ? 0.4 : 0.24;
+      this.dummy.scale.set(radius / crown, height, radius / crown);
       this.dummy.updateMatrix();
       set.mesh.setMatrixAt(n, this.dummy.matrix);
       set.phase.setX(n, (i * 0.113) % 1);
