@@ -4,6 +4,7 @@ import { BIOMES, Biome, PLANT_INDEX } from '../world/biomes';
 import type { World } from '../world/world';
 import { QUALITY_PRESETS } from '../core/config';
 import type { TextureLibrary } from './textures';
+import { Flora } from './flora';
 
 /**
  * Ground cover as crossed cards.
@@ -111,6 +112,7 @@ export class GroundCover {
   private lastCenter = new THREE.Vector2(1e9, 1e9);
   private lastRefresh = -1e9;
   private uniforms: THREE.IUniform[] = [];
+  private flora = new Flora();
 
   constructor(private world: World, quality: 'low' | 'medium' | 'high' | 'ultra', textures: TextureLibrary) {
     const preset = QUALITY_PRESETS[quality];
@@ -131,7 +133,7 @@ export class GroundCover {
     // A bush is a leafy thing, so it uses the broadleaf card rather than grass.
     this.shrub = this.makeMesh(this.shrubGeo, this.shrubCap, 'shrub', textures.leaf.broadleaf);
     this.reed = this.makeMesh(this.reedGeo, this.reedCap, 'reed', textures.card.reed);
-    this.group.add(this.grass, this.shrub, this.reed);
+    this.group.add(this.grass, this.shrub, this.reed, this.flora.group);
   }
 
   private makeMesh(geo: THREE.BufferGeometry, capacity: number, kind: 'grass' | 'shrub' | 'reed', map: THREE.Texture): THREE.InstancedMesh {
@@ -267,6 +269,7 @@ export class GroundCover {
     this.lastCenter.set(cameraPos.x, cameraPos.z);
     this.lastRefresh = now;
     this.resample(cameraPos);
+    this.flora.resample(this.world, cameraPos);
     this.updateUniforms(this.world.climate.windDirection, this.world.climate.windSpeed, season, snow);
   }
 
@@ -405,6 +408,7 @@ export class GroundCover {
   }
 
   dispose(): void {
+    this.flora.dispose();
     for (const m of [this.grass, this.shrub, this.reed]) {
       m.geometry.dispose();
       (m.material as THREE.Material).dispose();
