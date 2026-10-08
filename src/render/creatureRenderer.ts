@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { clamp, clamp01, lerp, TAU } from '../core/math';
 import type { Creatures } from '../life/organism';
 import { SPECIES, type Morphology } from '../life/species';
-import { SkinnedAnimals, RIGGED_SPECIES } from './skinnedAnimals';
+import { SkinnedAnimals } from './skinnedAnimals';
+import { buildRiggedAnimal } from './proceduralRig';
 import { RENDER } from '../core/config';
 import type { World } from '../world/world';
 
@@ -236,7 +237,7 @@ function addQuadrupedSignature(
  * head, large ears, a branched antler pair, long slender legs with fine feet,
  * a pale rump patch and a short tail.
  */
-function buildDeer(m: Morphology, detail: boolean): THREE.BufferGeometry {
+export function buildDeer(m: Morphology, detail: boolean): THREE.BufferGeometry {
   const L = m.bodyLength;
   const G = m.bodyGirth;
   const S = m.standHeight;
@@ -321,7 +322,7 @@ function buildDeer(m: Morphology, detail: boolean): THREE.BufferGeometry {
  * haunched rump, a short neck, a muzzle with a pink nose, long ears with pale
  * insides, folded forelegs, long hind feet and a white scut.
  */
-function buildRabbit(m: Morphology, detail: boolean): THREE.BufferGeometry {
+export function buildRabbit(m: Morphology, detail: boolean): THREE.BufferGeometry {
   const L = m.bodyLength;
   const G = m.bodyGirth;
   const S = m.standHeight;
@@ -1146,6 +1147,15 @@ export class CreatureRenderer {
     const detailScale = quality === 'low' ? 0.35 : quality === 'medium' ? 0.6 : 1;
     this.skinned = new SkinnedAnimals(this.group, quality === 'low' ? 4 : 12);
     this.skinned.load();
+    // Hand-built species get a procedural rig from their own mesh, so their
+    // close-ups are animated like the fox.
+    for (const key of ['rabbit', 'deer'] as const) {
+      const sp = SPECIES.find((x) => x.key === key);
+      if (!sp) continue;
+      const geo = key === 'rabbit' ? buildRabbit(sp.morphology, true) : buildDeer(sp.morphology, true);
+      const rig = buildRiggedAnimal(geo, sp.morphology.standHeight, key === 'rabbit');
+      this.skinned.addRigged(key, rig.scene, rig.animations);
+    }
     this.nearCap = Math.max(24, Math.round(70 * detailScale));
     this.farCap = Math.max(120, Math.round(320 * detailScale));
     for (let i = 0; i < SPECIES.length; i++) {
@@ -1178,7 +1188,7 @@ export class CreatureRenderer {
     this.lastNow = now;
     this.skinned.beginFrame();
     const alpha = world.frameAlpha;
-    for (const key of Object.keys(RIGGED_SPECIES)) {
+    for (const key of this.skinned.species()) {
       if (!this.skinned.isReady(key)) continue;
       const spIdx = SPECIES.findIndex((sp) => sp.key === key);
       if (spIdx < 0) continue;
