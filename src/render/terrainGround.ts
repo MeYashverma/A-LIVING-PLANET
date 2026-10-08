@@ -116,7 +116,6 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
         varying vec3 vWNormal;
         varying vec4 vSplatA;
         varying vec4 vSplatB;
-        varying vec2 vWater;
       `,
       )
       .replace(
@@ -323,7 +322,7 @@ export function createGroundMaterial(tex: GroundTextures, opts: { triplanar: boo
       );
     }
   };
-  material.customProgramCacheKey = () => `terrain-ground-v5-${opts.triplanar ? 'tri' : 'planar'}`;
+  material.customProgramCacheKey = () => `terrain-ground-v6-${opts.triplanar ? 'tri' : 'planar'}`;
 
   return { material, uniforms };
 }
