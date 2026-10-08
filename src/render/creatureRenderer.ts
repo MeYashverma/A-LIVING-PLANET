@@ -154,7 +154,84 @@ function mergeRaw(geos: THREE.BufferGeometry[], color: [number, number, number] 
 }
 
 /** Quadruped: body, neck, head, ears, four legs, tail, optional headgear. */
-export function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
+/**
+ * Per-species features on top of the shared quadruped template. Each entry
+ * adds geometry that no other species has, so no two quadrupeds share the same
+ * silhouette details.
+ */
+function addQuadrupedSignature(
+  key: string,
+  pieces: Piece[],
+  m: Morphology,
+  headPos: THREE.Vector3,
+  neckPivot: THREE.Vector3,
+  bodyY: number,
+): void {
+  const hs = m.headSize;
+  const bl = m.bodyLength;
+  const girth = m.bodyGirth;
+  const add = (geo: THREE.BufferGeometry, part: number, pivot: THREE.Vector3, color: [number, number, number]) =>
+    pieces.push({ geo: tag(geo, part, pivot), part, pivot: pivot.clone(), color });
+  const headPivot = neckPivot;
+  switch (key) {
+    case 'rabbit': {
+      // Long upright ears, pale inside.
+      for (const side of [-1, 1]) {
+        const ear = paint(bodyGeo(hs * 0.22, hs * 1.15, hs * 0.1, 12), m.fur, 0.05, 61);
+        ear.translate(headPos.x - hs * 0.15, headPos.y + hs * 1.0, side * hs * 0.3);
+        add(ear, PART.head, headPivot, m.fur);
+      }
+      break;
+    }
+    case 'bison': {
+      // Shoulder hump and a beard under the chin.
+      const hump = paint(bodyGeo(bl * 0.22, girth * 0.55, girth * 0.85, 16), m.fur, 0.06, 63);
+      hump.translate(bl * 0.22, bodyY + girth * 0.62, 0);
+      add(hump, PART.body, new THREE.Vector3(bl * 0.22, bodyY + girth * 0.62, 0), m.fur);
+      const beard = paint(bodyGeo(hs * 0.3, hs * 0.55, hs * 0.22, 10), m.accent, 0.05, 65);
+      beard.translate(headPos.x + hs * 0.35, headPos.y - hs * 0.55, 0);
+      add(beard, PART.head, headPivot, m.accent);
+      break;
+    }
+    case 'goat': {
+      // Chin beard.
+      const beard = paint(bodyGeo(hs * 0.14, hs * 0.5, hs * 0.14, 8), m.accent, 0.05, 67);
+      beard.translate(headPos.x + hs * 0.55, headPos.y - hs * 0.6, 0);
+      add(beard, PART.head, headPivot, m.accent);
+      break;
+    }
+    case 'lynx': {
+      // Ear tufts and cheek ruff.
+      for (const side of [-1, 1]) {
+        const tuft = paint(new THREE.ConeGeometry(hs * 0.12, hs * 0.45, 8, 1), m.accent, 0.04, 69);
+        tuft.translate(headPos.x - hs * 0.1, headPos.y + hs * 1.05, side * hs * 0.42);
+        add(tuft, PART.head, headPivot, m.accent);
+        const ruff = paint(bodyGeo(hs * 0.3, hs * 0.45, hs * 0.2, 10), m.accent, 0.05, 71);
+        ruff.translate(headPos.x - hs * 0.1, headPos.y - hs * 0.15, side * hs * 0.55);
+        add(ruff, PART.head, headPivot, m.accent);
+      }
+      break;
+    }
+    case 'wolf': {
+      // Thick neck ruff.
+      const ruff = paint(bodyGeo(hs * 0.7, hs * 0.75, hs * 0.75, 14), m.accent, 0.06, 73);
+      ruff.translate(neckPivot.x + (headPos.x - neckPivot.x) * 0.55, neckPivot.y + (headPos.y - neckPivot.y) * 0.55, 0);
+      add(ruff, PART.head, headPivot, m.accent);
+      break;
+    }
+    case 'deer': {
+      // Pale rump patch.
+      const rump = paint(bodyGeo(bl * 0.12, girth * 0.5, girth * 0.7, 12), [0.93, 0.91, 0.85], 0.03, 75);
+      rump.translate(-bl * 0.45, bodyY + girth * 0.15, 0);
+      add(rump, PART.body, new THREE.Vector3(-bl * 0.45, bodyY, 0), [0.93, 0.91, 0.85]);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+export function buildQuadruped(m: Morphology, detail: boolean, key?: string): THREE.BufferGeometry {
   const pieces: Piece[] = [];
   const stand = m.standHeight;
   const bl = m.bodyLength;
@@ -253,6 +330,10 @@ export function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeom
     pieces.push({ geo: tag(mane, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.accent });
   }
 
+  // Species signature: features that make this animal recognisable at a glance.
+  // Shared body templates alone made many species look alike.
+  if (detail && key) addQuadrupedSignature(key, pieces, m, headPos, neckPivot, bodyY);
+
   // Legs.
   const shoulder = new THREE.Vector3(bl * 0.33, bodyY - girth * 0.25, girth * 0.72);
   const hip = new THREE.Vector3(-bl * 0.33, bodyY - girth * 0.3, girth * 0.72);
@@ -323,8 +404,95 @@ function tube(from: THREE.Vector3, to: THREE.Vector3, rFrom: number, rTo: number
   return g;
 }
 
+
+/** Bird-only features, per species. */
+function addBirdSignature(key: string, pieces: Piece[], m: Morphology, headPivot: THREE.Vector3): void {
+  const hs = m.headSize;
+  const add = (geo: THREE.BufferGeometry, color: [number, number, number]) => pieces.push({ geo: tag(geo, PART.head, headPivot), part: PART.head, pivot: headPivot.clone(), color });
+  switch (key) {
+    case 'eagle': {
+      // Pale head and a hooked tip on the bill.
+      const cap = paint(bodyGeo(hs * 0.7, hs * 0.55, hs * 0.6, 14), [0.96, 0.95, 0.92], 0.02, 81);
+      cap.translate(headPivot.x + hs * 0.1, headPivot.y + hs * 0.15, 0);
+      add(cap, [0.96, 0.95, 0.92]);
+      const hook = paint(new THREE.ConeGeometry(hs * 0.12, hs * 0.35, 8), m.accent, 0.03, 83);
+      hook.rotateZ(-Math.PI / 2 + 0.6);
+      hook.translate(headPivot.x + hs * 1.15, headPivot.y - hs * 0.22, 0);
+      add(hook, m.accent);
+      break;
+    }
+    case 'owl': {
+      // Facial disc and ear tufts.
+      const disc = paint(bodyGeo(hs * 0.2, hs * 0.85, hs * 0.85, 14), m.accent, 0.03, 85);
+      disc.translate(headPivot.x + hs * 0.5, headPivot.y, 0);
+      add(disc, m.accent);
+      for (const side of [-1, 1]) {
+        const tuft = paint(new THREE.ConeGeometry(hs * 0.16, hs * 0.7, 8), m.fur, 0.04, 87);
+        tuft.translate(headPivot.x - hs * 0.1, headPivot.y + hs * 0.75, side * hs * 0.35);
+        add(tuft, m.fur);
+      }
+      break;
+    }
+    case 'raven': {
+      // Heavy bill and throat bristles.
+      const bill = paint(new THREE.ConeGeometry(hs * 0.3, hs * 1.1, 10), m.accent, 0.02, 89);
+      bill.rotateZ(-Math.PI / 2);
+      bill.translate(headPivot.x + hs * 1.0, headPivot.y - hs * 0.05, 0);
+      add(bill, m.accent);
+      const bristle = paint(bodyGeo(hs * 0.3, hs * 0.35, hs * 0.4, 8), m.fur, 0.03, 91);
+      bristle.translate(headPivot.x + hs * 0.55, headPivot.y - hs * 0.45, 0);
+      add(bristle, m.fur);
+      break;
+    }
+    case 'heron': {
+      // Dagger bill and two crest plumes.
+      const bill = paint(new THREE.ConeGeometry(hs * 0.1, hs * 2.2, 8), m.accent, 0.02, 93);
+      bill.rotateZ(-Math.PI / 2 + 0.05);
+      bill.translate(headPivot.x + hs * 1.2, headPivot.y - hs * 0.02, 0);
+      add(bill, m.accent);
+      for (const side of [-1, 1]) {
+        const plume = paint(new THREE.ConeGeometry(hs * 0.06, hs * 1.2, 6), m.accent, 0.03, 95);
+        plume.rotateZ(0.9);
+        plume.translate(headPivot.x - hs * 0.4, headPivot.y + hs * 0.55, side * hs * 0.1);
+        add(plume, m.accent);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+/** Fish-only features, per species. */
+function addFishSignature(key: string, pieces: Piece[], m: Morphology, bl: number, girth: number): void {
+  const origin = new THREE.Vector3();
+  const add = (geo: THREE.BufferGeometry, color: [number, number, number]) => pieces.push({ geo: tag(geo, PART.body, origin), part: PART.body, pivot: origin.clone(), color });
+  switch (key) {
+    case 'trout': {
+      // Red lateral stripe along each flank.
+      for (const side of [-1, 1]) {
+        const stripe = paint(bodyGeo(bl * 0.38, girth * 0.12, girth * 0.08, 10), [0.78, 0.22, 0.2], 0.04, 97);
+        stripe.translate(bl * 0.02, girth * 0.05, side * girth * 0.6);
+        add(stripe, [0.78, 0.22, 0.2]);
+      }
+      break;
+    }
+    case 'perch': {
+      // Spiny front dorsal: a row of short spines.
+      for (let k = 0; k < 7; k++) {
+        const spine = paint(new THREE.ConeGeometry(girth * 0.1, girth * 0.55, 5), m.accent, 0.03, 99 + k);
+        spine.translate(bl * (-0.12 + k * 0.05), girth * 0.62, 0);
+        add(spine, m.accent);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
 /** Bird: body, head+beak, tail fan, wings. */
-export function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry {
+export function buildBird(m: Morphology, detail: boolean, key?: string): THREE.BufferGeometry {
   const pieces: Piece[] = [];
   const stand = m.standHeight;
   const bl = m.bodyLength;
@@ -363,6 +531,8 @@ export function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry 
       pieces.push({ geo: tag(eye, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.eye });
     }
   }
+
+  if (detail && key) addBirdSignature(key, pieces, m, headPivot);
 
   const beak = paint(new THREE.ConeGeometry(m.headSize * 0.22, m.headSize * 0.9, detail ? 12 : 5), m.accent, 0.04, 53);
   beak.rotateZ(-Math.PI / 2);
@@ -431,7 +601,7 @@ export function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry 
 }
 
 /** Fish: fusiform body, tail fin, dorsal fin, side fins. */
-export function buildFish(m: Morphology, detail: boolean): THREE.BufferGeometry {
+export function buildFish(m: Morphology, detail: boolean, key?: string): THREE.BufferGeometry {
   const pieces: Piece[] = [];
   const bl = m.bodyLength;
   const girth = m.bodyGirth;
@@ -446,6 +616,7 @@ export function buildFish(m: Morphology, detail: boolean): THREE.BufferGeometry 
   const head = paint(bodyGeo(m.headSize * 0.6, m.headSize * 0.5, m.headSize * 0.55, detail ? 14 : 6), m.fur, 0.05, 71);
   head.translate(bl * 0.32, 0, 0);
   pieces.push({ geo: tag(head, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.fur });
+  if (detail && key) addFishSignature(key, pieces, m, bl, girth);
 
   // Eyes, set high on the head as they are on a trout.
   if (detail) {
@@ -801,7 +972,8 @@ export class CreatureRenderer {
     this.farCap = Math.max(120, Math.round(320 * detailScale));
     for (let i = 0; i < SPECIES.length; i++) {
       const m = SPECIES[i].morphology;
-      const build = SPECIES[i].locomotion === 'bird' ? buildBird : SPECIES[i].locomotion === 'fish' ? buildFish : buildQuadruped;
+      const key = SPECIES[i].key;
+      const build = (mm: Morphology, d: boolean) => (SPECIES[i].locomotion === 'bird' ? buildBird(mm, d, key) : SPECIES[i].locomotion === 'fish' ? buildFish(mm, d, key) : buildQuadruped(mm, d, key));
       const near = build(m, true);
       const far = quality === 'low' ? near : build(m, false);
       const mesh = new SpeciesMesh(i, near, far, this.nearCap, this.farCap);

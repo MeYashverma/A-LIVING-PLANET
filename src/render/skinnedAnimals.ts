@@ -2,12 +2,12 @@
  * Skinned, animated animals for the nearest creatures.
  *
  * Far animals are drawn as instances of a procedural mesh (creatureRenderer).
- * The closest few of each species that has a rigged model are drawn here
+ * The closest few of a species that has its own rigged model are drawn here
  * instead, with a real skeleton. The clip is chosen from the simulation's own
  * action, speed and flying state.
  *
- * Models are Mesh2Motion's CC0 rigs (see public/assets/ATTRIBUTION.md). Several
- * species share one model where no better one exists; those are stand-ins.
+ * Only the fox has a rigged model. Mesh2Motion's CC0 fox rig is the only
+ * animal model used, so no species shares another species' model.
  */
 import * as THREE from 'three';
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -16,7 +16,7 @@ import { Action } from '../life/organism';
 import type { Creatures } from '../life/organism';
 
 /** Simulated state to clip name, per model. */
-type Clips = Partial<Record<'idle' | 'walk' | 'run' | 'rest' | 'die' | 'bite' | 'fly' | 'glide', string>>;
+type Clips = Partial<Record<'idle' | 'walk' | 'run' | 'rest' | 'die' | 'bite', string>>;
 
 interface ModelDef {
   file: string;
@@ -28,22 +28,11 @@ const MODELS: Record<string, ModelDef> = {
     file: 'assets/models/mesh2motion-fox.glb',
     clips: { idle: 'Idle', walk: 'Walk', run: 'Run', rest: 'Sit', die: 'Death', bite: 'Bite' },
   },
-  horse: {
-    file: 'assets/models/mesh2motion-horse.glb',
-    clips: { idle: 'Idle', walk: 'Walk', run: 'Run', rest: 'Sleep', die: 'Death', bite: 'Eating' },
-  },
 };
 
-/** Which species use which model. Entries marked "stand-in" borrow a model of a different animal. */
-// Only species whose rigged model is a reasonable match. Everything else stays
-// on the procedural species meshes, which are closer in shape. Stand-ins for
-// lynx, bison, goat, owl, raven, heron, eagle, trout and perch were removed
-// after a visual check: the seagull, cartoon shark and generic horse did not
-// read as those animals.
+/** Species drawn with a rigged model. Every other species keeps its own procedural mesh. */
 export const RIGGED_SPECIES: Record<string, string> = {
   fox: 'fox',
-  wolf: 'fox', // canid stand-in, same body plan
-  deer: 'horse', // ungulate stand-in, same body plan
 };
 
 interface Slot {
@@ -113,9 +102,8 @@ export class SkinnedAnimals {
   }
 
   /**
-   * Place the nearest animals of a species on skinned slots. `picks` are creature
-   * slots chosen by the caller. The creature slots drawn here are recorded so
-   * the instanced pass can skip them.
+   * Place the nearest animals of a species on skinned slots. The creature slots
+   * drawn here are recorded so the instanced pass can skip them.
    */
   place(species: string, picks: number[], c: Creatures, bodyLength: number, heading: (i: number) => number, pos: (i: number) => THREE.Vector3): void {
     const pool = this.pools.get(species);
@@ -139,7 +127,7 @@ export class SkinnedAnimals {
       const p = pos(i);
       // Feet at the creature's ground height: lift by the model's lowest point.
       slot.root.position.set(p.x, p.y - model.minY * k, p.z);
-      // The models face +Z. The instanced meshes face +X and use
+      // The model faces +Z. The instanced meshes face +X and use
       // rotation.y = -heading, so this offset makes the two agree.
       slot.root.rotation.set(0, Math.PI / 2 - heading(i), 0);
       const state = this.pickState(i, c, def.clips);
@@ -159,13 +147,12 @@ export class SkinnedAnimals {
     }
   }
 
-  /** Map the simulation's action, speed and flight to a state with a clip. */
+  /** Map the simulation's action and speed to a state with a clip. */
   private pickState(i: number, c: Creatures, clips: Clips): string {
     const speed = c.speed[i];
     const action = c.action[i];
     let state = 'idle';
     if (action === Action.Die) state = 'die';
-    else if (c.flying[i]) state = speed > 1.5 ? 'fly' : 'glide';
     else if (action === Action.Hunt && speed < 0.2) state = 'bite';
     else if (speed > 3.5) state = 'run';
     else if (speed > 0.15) state = 'walk';

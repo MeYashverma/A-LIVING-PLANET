@@ -54,4 +54,3 @@ to give attribution, though it is appreciated."* The CC0 1.0 deed is at
 | [TypeScript](https://www.typescriptlang.org) | Apache-2.0 |
 | WebGL Water by Evan Wallace (algorithm and shader logic, adapted in `src/render/waterSim.ts`) | MIT, Copyright 2011 Evan Wallace, <http://madebyevan.com/webgl-water/> |
 | Fox skinned model and animations (`assets/models/mesh2motion-fox.glb`) | Mesh2Motion fox model, rig and clips (Walk, Run, Idle, Sit, Bite, Death) | `Mesh2Motion/mesh2motion-app` (`static/animations/fox-animations.glb`) | CC0-1.0 |
-| Horse skinned model and animations (`assets/models/mesh2motion-horse.glb`) | Mesh2Motion horse model, rig and clips | `Mesh2Motion/mesh2motion-app` (`static/animations/horse-animations.glb`) | CC0-1.0 |
