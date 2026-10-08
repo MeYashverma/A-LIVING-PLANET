@@ -762,7 +762,10 @@ export function decide(world: World, slot: number, p: Perceived): void {
   if (sp.social === 'herd' || sp.social === 'flock' || sp.social === 'school' || sp.social === 'pack') {
     const group = world.social.groupFor(c, slot);
     if (group?.migrating) scores[Action.Migrate] = 1.5 * (1 - clamp01((hunger - 0.45) * 1.6));
-    else if (hunger > 0.6 && p.foodQuality < 0.1) scores[Action.Migrate] = 0.9 * d.hungerWeight;
+    // Plant scarcity sends a herbivore on the move. A predator has no plant
+    // diet, so "no plants" is always true for it: that made every hungry wolf
+    // leave its range instead of hunting. Predators search by hunting (above).
+    else if (hunger > 0.6 && p.foodQuality < 0.1 && sp.dietKind !== 'predator') scores[Action.Migrate] = 0.9 * d.hungerWeight;
   }
   // Spawning runs matter, but a starving fish feeds first.
   const fishFeed = 1 - clamp01((hunger - 0.35) * 2);

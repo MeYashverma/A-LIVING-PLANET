@@ -341,7 +341,10 @@ export class Creatures {
     this.sex = new Uint8Array(cap);
     this.id = new Int32Array(cap).fill(0);
     this.genome = new Array(cap).fill(null);
-    this.personality = f32();
+    // Six personality traits per animal. This was allocated with one float per
+    // animal, so every slot above capacity/6 read undefined: personality-driven
+    // scores (hunting, patrol, flight) came out NaN and those actions never won.
+    this.personality = new Float32Array(cap * P_TRAITS);
     this.generation = new Int32Array(cap);
     this.motherId = i32();
     this.fatherId = i32();
@@ -416,10 +419,12 @@ export class Creatures {
     this.alerted = f32();
     this.alarmTimer = f32();
     this.callCooldown = f32();
-    this.memX = f32();
-    this.memY = f32();
-    this.memKind = new Uint8Array(cap);
-    this.memStrength = f32();
+    // Per-animal arrays with several entries each. These were allocated one
+    // entry per animal, so memory and trail reads for most slots were undefined.
+    this.memX = new Float32Array(cap * MEM_SLOTS);
+    this.memY = new Float32Array(cap * MEM_SLOTS);
+    this.memKind = new Uint8Array(cap * MEM_SLOTS);
+    this.memStrength = new Float32Array(cap * MEM_SLOTS);
     this.memCursor = new Uint8Array(cap);
     this.homeX = f32();
     this.homeY = f32();
@@ -443,9 +448,9 @@ export class Creatures {
     this.litters = new Int32Array(cap);
     this.eggsLaid = new Int32Array(cap);
     this.pregnancyCount = new Int32Array(cap);
-    this.trailX = f32();
-    this.trailY = f32();
-    this.trailAge = f32();
+    this.trailX = new Float32Array(cap * TRAIL_POINTS);
+    this.trailY = new Float32Array(cap * TRAIL_POINTS);
+    this.trailAge = new Float32Array(cap * TRAIL_POINTS);
     this.trailCursor = new Uint8Array(cap);
     this.trailCount = new Uint8Array(cap);
     this.trailTimer = f32();
