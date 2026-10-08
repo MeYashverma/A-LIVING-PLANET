@@ -294,6 +294,21 @@ export function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeom
 }
 
 /**
+ * A thin panel with a real outline (fin, wing, tail fan): the closed polygon
+ * is extruded by `thickness`, so the panel has a true edge and a visible
+ * thickness instead of a rectangle.
+ */
+function flatPanel(outline: [number, number][], thickness: number): THREE.BufferGeometry {
+  const shape = new THREE.Shape();
+  outline.forEach(([x, y], i) => (i === 0 ? shape.moveTo(x, y) : shape.lineTo(x, y)));
+  shape.closePath();
+  const g = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false, curveSegments: 1 });
+  g.translate(0, 0, -thickness / 2);
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
  * A tapered tube from `from` to `to`. The cylinder is oriented about its own
  * centre first and only then moved to the midpoint, so its ends land exactly on
  * the two points. Translating before rotating moves it off the points.
@@ -322,16 +337,19 @@ export function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry 
   belly.translate(bl * 0.04, stand - girth * 0.3, 0);
   pieces.push({ geo: tag(belly, PART.body, new THREE.Vector3()), part: PART.body, pivot: new THREE.Vector3(), color: m.belly });
 
-  const headPivot = new THREE.Vector3(bl * 0.42, stand + girth * 0.35, 0);
+  // The head sits at the far end of the neck, at the species' own neck length,
+  // so a heron's head is carried high and a finch's barely clears its back.
+  const neckBase = new THREE.Vector3(bl * 0.3, stand + girth * 0.2, 0);
+  const neckDir = new THREE.Vector3(0.35, 1, 0).normalize();
+  const neckLen = Math.max(0.03, m.neck);
+  const headPivot = new THREE.Vector3(neckBase.x + neckDir.x * neckLen, neckBase.y + neckDir.y * neckLen, 0);
   const head = paint(bodyGeo(m.headSize * 0.8, m.headSize * 0.75, m.headSize * 0.75, detail ? 18 : 5), m.fur, 0.05, 47);
   head.translate(headPivot.x + m.headSize * 0.3, headPivot.y, 0);
   pieces.push({ geo: tag(head, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.fur });
 
   // Neck: a tapered tube from the chest up to the head. Every bird gets one;
   // without it a heron's head sits on its body like a bead.
-  const neckBase = new THREE.Vector3(bl * 0.3, stand + girth * 0.2, 0);
-  const neckTop = new THREE.Vector3(headPivot.x + m.headSize * 0.1, headPivot.y - m.headSize * 0.05, 0);
-  const neckGeo = tube(neckBase, neckTop, girth * 0.42, m.headSize * 0.32, detail ? 14 : 6);
+  const neckGeo = tube(neckBase, headPivot, girth * 0.42, m.headSize * 0.32, detail ? 14 : 6);
   pieces.push({ geo: tag(paint(neckGeo, m.fur, 0.05, 49), PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.fur });
 
   // Birds get the same eyes-and-nose treatment as mammals: at close range a
@@ -352,7 +370,20 @@ export function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry 
 
   // Tail fan.
   const tailPivot = new THREE.Vector3(-bl * 0.45, stand + girth * 0.1, 0);
-  const tail = paint(new THREE.BoxGeometry(m.tailLength * 1.6, 0.03, m.tailLength * 1.5), m.fur, 0.06, 59);
+  // Tail fan: a rounded outline, laid flat behind the body.
+  const TL = m.tailLength * 1.6;
+  const TW = m.tailLength * 1.5;
+  const fan: [number, number][] = [
+    [TL * 0.5, -TW * 0.1],
+    [TL * 0.1, -TW * 0.5],
+    [-TL * 0.4, -TW * 0.55],
+    [-TL * 0.5, -TW * 0.2],
+    [-TL * 0.5, TW * 0.2],
+    [-TL * 0.4, TW * 0.55],
+    [TL * 0.1, TW * 0.5],
+  ];
+  const tail = paint(flatPanel(fan, 0.03), m.fur, 0.06, 59);
+  tail.rotateX(-Math.PI / 2);
   tail.rotateZ(0.12);
   tail.translate(tailPivot.x - m.tailLength * 0.8, tailPivot.y, 0);
   pieces.push({ geo: tag(tail, PART.tail, tailPivot), part: PART.tail, pivot: tailPivot, color: m.fur });
@@ -362,13 +393,33 @@ export function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry 
   for (const side of [-1, 1]) {
     const part = side < 0 ? PART.wingL : PART.wingR;
     const pivot = new THREE.Vector3(bl * 0.05, stand + girth * 0.2, side * girth * 0.5);
-    const inner = paint(new THREE.BoxGeometry(bl * 0.5, 0.035, span * 0.55), m.accent, 0.06, part * 9);
-    inner.translate(pivot.x - bl * 0.1, pivot.y, side * (girth * 0.5 + span * 0.27));
+    const c = bl * 0.5;
+    const S1 = span * 0.55;
+    // Root section: broad at the body, narrowing toward the mid-wing.
+    const innerOutline: [number, number][] = [
+      [-c * 0.5, 0],
+      [c * 0.5, 0],
+      [c * 0.3, S1 * 0.7],
+      [-c * 0.35, S1],
+    ];
+    const inner = paint(flatPanel(innerOutline, 0.035), m.accent, 0.06, part * 9);
+    inner.rotateX(side < 0 ? -Math.PI / 2 : Math.PI / 2);
+    inner.translate(pivot.x - bl * 0.1, pivot.y, side * girth * 0.5);
     pieces.push({ geo: tag(inner, part, pivot), part, pivot, color: m.accent });
     if (detail) {
-      const outer = paint(new THREE.BoxGeometry(bl * 0.44, 0.03, span * 0.5), m.accent, 0.06, part * 11);
-      outer.rotateY(side * -0.25);
-      outer.translate(pivot.x - bl * 0.3, pivot.y, side * (girth * 0.5 + span * 0.78));
+      // Primary feathers: a narrower tip section continuing the span.
+      const c2 = bl * 0.44;
+      const S2 = span * 0.5;
+      const outerOutline: [number, number][] = [
+        [-c2 * 0.5, S1 * 0.9],
+        [c2 * 0.4, S1 * 0.9],
+        [c2 * 0.25, S1 + S2 * 0.6],
+        [-c2 * 0.1, S1 + S2],
+        [-c2 * 0.5, S1 + S2 * 0.8],
+      ];
+      const outer = paint(flatPanel(outerOutline, 0.03), m.accent, 0.06, part * 11);
+      outer.rotateX(side < 0 ? -Math.PI / 2 : Math.PI / 2);
+      outer.translate(pivot.x - bl * 0.3, pivot.y, side * girth * 0.5);
       pieces.push({ geo: tag(outer, part, pivot), part, pivot, color: m.accent });
     }
   }
@@ -407,20 +458,52 @@ export function buildFish(m: Morphology, detail: boolean): THREE.BufferGeometry 
 
   // Tail fin.
   const tailPivot = new THREE.Vector3(-bl * 0.42, 0, 0);
-  const tail = paint(new THREE.BoxGeometry(bl * 0.2, girth * 1.5, 0.02), m.accent, 0.06, 73);
+  // Forked caudal fin: a crescent outline, its base on the body's rear end.
+  const H = girth * 0.8;
+  const L = bl * 0.2;
+  const tailOutline: [number, number][] = [
+    [0, -0.25 * H],
+    [-0.5 * L, -H],
+    [-L, -0.85 * H],
+    [-0.8 * L, 0],
+    [-L, 0.85 * H],
+    [-0.5 * L, H],
+    [0, 0.25 * H],
+    [-0.25 * L, 0],
+  ];
+  const tail = paint(flatPanel(tailOutline, 0.02), m.accent, 0.06, 73);
   tail.translate(-bl * 0.5, 0, 0);
   pieces.push({ geo: tag(tail, PART.tail, tailPivot), part: PART.tail, pivot: tailPivot, color: m.accent });
 
   if (m.finStyle !== 'none') {
     const finPivot = new THREE.Vector3(0, girth * 0.5, 0);
-    const fin = paint(new THREE.BoxGeometry(bl * 0.28, girth * 0.9, 0.02), m.accent, 0.06, 79);
-    fin.rotateZ(-0.3);
-    fin.translate(bl * 0.05, girth * 0.55, 0);
+    const B = bl * 0.28;
+    const D = girth * 0.9;
+    const dorsal: [number, number][] = [
+      [0, 0],
+      [B, 0],
+      [B * 0.65, D * 0.45],
+      [B * 0.3, D],
+      [0, D * 0.4],
+    ];
+    const fin = paint(flatPanel(dorsal, 0.02), m.accent, 0.06, 79);
+    fin.translate(-B * 0.4, girth * 0.45, 0);
     pieces.push({ geo: tag(fin, PART.fin, finPivot), part: PART.fin, pivot: finPivot, color: m.accent });
   }
   if (detail) {
     for (const side of [-1, 1]) {
-      const fin = paint(new THREE.BoxGeometry(bl * 0.16, 0.02, girth * 0.6), m.accent, 0.05, side * 83 + 90);
+      const L2 = bl * 0.16;
+      const W2 = girth * 0.6;
+      const paddle: [number, number][] = [
+        [0, 0],
+        [L2 * 0.55, W2 * 0.5],
+        [L2, W2 * 0.2],
+        [L2 * 0.9, 0],
+        [L2, -W2 * 0.2],
+        [L2 * 0.55, -W2 * 0.5],
+      ];
+      const fin = paint(flatPanel(paddle, 0.02), m.accent, 0.05, side * 83 + 90);
+      fin.rotateX(side < 0 ? -Math.PI / 2 : Math.PI / 2);
       fin.rotateY(side * 0.4);
       fin.translate(bl * 0.12, -girth * 0.1, side * girth * 0.5);
       pieces.push({ geo: tag(fin, PART.fin, new THREE.Vector3(0, 0, 0)), part: PART.fin, pivot: new THREE.Vector3(), color: m.accent });
