@@ -1319,10 +1319,10 @@ export class CreatureRenderer {
     for (const key of ['rabbit', 'deer', 'wolf', 'lynx'] as const) {
       const sp = SPECIES.find((x) => x.key === key);
       if (!sp) continue;
-      if (key === 'rabbit' || key === 'deer') {
+      if (key === 'rabbit' || key === 'deer' || key === 'wolf') {
         // Generated smooth mesh (tools/animal_models); fall back to the hand-built one.
         const fallback = () => {
-          const build = key === 'rabbit' ? buildRabbit : buildDeer;
+          const build = key === 'rabbit' ? buildRabbit : key === 'deer' ? buildDeer : buildWolf;
           const rig = buildRiggedAnimal(build(sp.morphology, true), sp.morphology.standHeight, key === 'rabbit');
           this.skinned.addRigged(key, rig.scene, rig.animations);
         };
@@ -1332,7 +1332,7 @@ export class CreatureRenderer {
         });
         continue;
       }
-      const build = key === 'wolf' ? buildWolf : buildLynx;
+      const build = buildLynx;
       const geo = build(sp.morphology, true);
       const rig = buildRiggedAnimal(geo, sp.morphology.standHeight, false);
       this.skinned.addRigged(key, rig.scene, rig.animations);
