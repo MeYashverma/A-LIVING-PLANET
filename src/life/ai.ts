@@ -1621,6 +1621,22 @@ export function move(world: World, slot: number, dt: number, targetX: number, ta
     const limit = world.terrain.half * 0.98;
     nx = clamp(nx, -limit, limit);
     ny = clamp(ny, -limit, limit);
+    // Tree trunks are solid for anything on foot. Crowns are not: animals walk
+    // beneath them. A step into a trunk is refused and the animal turns away
+    // from it, so it skirts the trunk rather than passing through.
+    if (sp.locomotion !== 'fish' && !c.flying[slot]) {
+      const trunk = trunkInWay(world, nx, ny, Math.max(0.25, sp.bodyLength * 0.2));
+      if (trunk >= 0) {
+        const tx = world.forest.store.x[trunk] - x;
+        const ty = world.forest.store.y[trunk] - y;
+        // Positive cross product: the trunk is on the left, so turn right.
+        const cross = Math.cos(c.heading[slot]) * ty - Math.sin(c.heading[slot]) * tx;
+        c.heading[slot] = wrapAngle(c.heading[slot] + (cross > 0 ? -0.9 : 0.9));
+        c.speed[slot] = Math.min(c.speed[slot], sp.walkSpeed * 0.3);
+        nx = x;
+        ny = y;
+      }
+    }
     const depth = world.terrain.waterAtWorld(nx, ny);
     if (sp.locomotion === 'fish') {
       if (depth < 0.15) {
@@ -1651,25 +1667,9 @@ export function move(world: World, slot: number, dt: number, targetX: number, ta
     }
     c.x[slot] = nx;
     c.y[slot] = ny;
-    // Height follows the ground (or the water surface for swimmers).
-    const ground = world.terrain.elevationAtWorld(nx, ny);
-    const water = world.terrain.waterAtWorld(nx, ny);
-    let targetZ = ground;
-    if (sp.locomotion === 'fish') {
-      targetZ = ground + Math.max(0.05, water * 0.55);
-      c.flying[slot] = 0;
-    } else if (sp.locomotion === 'bird') {
-      // Birds fly when travelling or fleeing, and land to feed or rest.
-      const wantsFlight = c.action[slot] === Action.Hunt || c.action[slot] === Action.Migrate || c.action[slot] === Action.Flee || (c.action[slot] === Action.Wander && c.speed[slot] > sp.walkSpeed * 0.6);
-      c.flying[slot] = wantsFlight ? 1 : 0;
-      const altitude = wantsFlight ? clamp(12 + stepDistance * 0.4, 6, 55) : 0;
-      targetZ = ground + Math.max(water * 0.6, 0) + altitude;
-    } else {
-      targetZ = Math.max(ground, ground + water * 0.35);
-      c.flying[slot] = 0;
-    }
-    c.z[slot] = lerp(c.z[slot], targetZ, clamp01(dt / 8));
   }
+
+  settleVertical(world, slot, dt, stepDistance);
 
   // Fatigue from exertion.
   const exertion = c.speed[slot] / Math.max(1, sp.runSpeed);
@@ -1680,6 +1680,76 @@ export function move(world: World, slot: number, dt: number, targetX: number, ta
   // Wandering tracks, so the ground remembers where animals walked.
   if (sp.bodyLength > 0.25 && stepDistance > 0.2 && world.rng.chance(clamp01(stepDistance / 8))) {
     world.recordTrack(slot);
+  }
+}
+
+/** Gravity, m/s². */
+const GRAVITY = 9.81;
+const trunkScratch = new Int32Array(64);
+const trunkOut = new Int32Array(32);
+
+/**
+ * The closest live tree whose trunk would be entered by a body at (x, y) with
+ * the given clearance, or -1. Only trunks are solid; the crown is not.
+ */
+function trunkInWay(world: World, x: number, y: number, clearance: number): number {
+  const store = world.forest.store;
+  const n = store.queryNear(x, y, clearance + 1.5, trunkOut, trunkScratch);
+  let best = -1;
+  let bestGap = Infinity;
+  for (let i = 0; i < n; i++) {
+    const t = trunkOut[i];
+    const trunk = Math.min(0.6, Math.max(0.1, store.height[t] * 0.035));
+    const gap = Math.hypot(store.x[t] - x, store.y[t] - y) - trunk - clearance;
+    if (gap < 0 && gap < bestGap) {
+      bestGap = gap;
+      best = t;
+    }
+  }
+  return best;
+}
+
+/**
+ * Vertical placement. Ground animals stand on the terrain: they never sit below
+ * it, they climb it at once, and when they are above it they fall with real
+ * gravity. Swimmers ride the surface; birds climb and glide to altitude.
+ */
+function settleVertical(world: World, slot: number, dt: number, stepDistance: number): void {
+  const c = world.creatures;
+  const sp = SPECIES[c.speciesIdx[slot]];
+  const x = c.x[slot];
+  const y = c.y[slot];
+  const ground = world.terrain.elevationAtWorld(x, y);
+  const water = world.terrain.waterAtWorld(x, y);
+
+  if (sp.locomotion === 'fish') {
+    c.z[slot] = ground + Math.max(0.05, water * 0.55);
+    c.flying[slot] = 0;
+    return;
+  }
+
+  if (sp.locomotion === 'bird') {
+    // Birds fly when travelling or fleeing, and land to feed or rest.
+    const wantsFlight = c.action[slot] === Action.Hunt || c.action[slot] === Action.Migrate || c.action[slot] === Action.Flee || (c.action[slot] === Action.Wander && c.speed[slot] > sp.walkSpeed * 0.6);
+    c.flying[slot] = wantsFlight ? 1 : 0;
+    if (wantsFlight) {
+      const altitude = clamp(12 + stepDistance * 0.4, 6, 55);
+      const target = ground + Math.max(water * 0.6, 0) + altitude;
+      c.z[slot] = Math.max(ground + 0.5, lerp(c.z[slot], target, clamp01(dt / 8)));
+      return;
+    }
+    // Landed birds are on the ground like anything else.
+  } else {
+    c.flying[slot] = 0;
+  }
+
+  const standing = ground + Math.max(0, water * 0.35);
+  if (c.z[slot] > standing) {
+    // Free fall from rest over this step; never below the surface it lands on.
+    const seconds = dt * 60;
+    c.z[slot] = Math.max(standing, c.z[slot] - 0.5 * GRAVITY * seconds * seconds);
+  } else {
+    c.z[slot] = standing;
   }
 }
 

@@ -239,7 +239,9 @@ export class TerrainMesh {
           colour = mix(colour, vec3(0.5, 0.56, 0.62), uRain * 0.3);
           colour *= uTint;
 
-          float alpha = mix(uOpacity, 0.82, depth);
+          // Shallow water is clear enough to show the bed; deep water is opaque.
+          // (Was inverted: deep water came out more transparent than shallow.)
+          float alpha = mix(uOpacity * 0.6, min(0.97, uOpacity + 0.06), depth);
           gl_FragColor = vec4(colour, clamp(alpha + foam * 0.4, 0.0, 1.0));
           #include <fog_fragment>
         }
