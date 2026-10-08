@@ -534,7 +534,70 @@ def goat_parts(m):
     return bones, parts
 
 
-SPECIES = {"rabbit": rabbit_parts, "deer": deer_parts, "wolf": wolf_parts, "lynx": lynx_parts, "bison": bison_parts, "goat": goat_parts}
+def bear_parts(m):
+    L, G, S, H = m["bodyLength"], m["bodyGirth"], m["standHeight"], m["headSize"]
+    fur, belly, accent, eye = m["fur"], m["belly"], m["accent"], m["eye"]
+    leg = [c * 0.8 for c in fur]
+    neck = (L * 0.4, S + G * 0.3, 0.0)
+    head = (L * 0.5 + H * 0.2, S + G * 0.62, 0.0)
+    tail = (-L * 0.5, S + G * 0.2, 0.0)
+
+    bones = {
+        "body": (0.0, S, 0.0),
+        "head": neck,
+        "tail": tail,
+        "earL": (head[0] - H * 0.45, head[1] + H * 0.7, -H * 0.5),
+        "earR": (head[0] - H * 0.45, head[1] + H * 0.7, H * 0.5),
+        "legFL": (L * 0.3, S - G * 0.3, -G * 0.55),
+        "legFR": (L * 0.3, S - G * 0.3, G * 0.55),
+        "legRL": (-L * 0.3, S - G * 0.3, -G * 0.55),
+        "legRR": (-L * 0.3, S - G * 0.3, G * 0.55),
+    }
+
+    parts = []
+    # Heavy, round body with a slight shoulder mass.
+    parts.append(("body", "barrel", fur, 0.04, [
+        ("ell", (0.0, S, 0.0), (L * 0.46, G * 0.8, G * 0.82)),
+        ("ell", (L * 0.24, S + G * 0.2, 0.0), (L * 0.22, G * 0.78, G * 0.8)),
+    ]))
+    parts.append(("body", "belly", belly, 0.03, [
+        ("ell", (L * 0.04, S - G * 0.36, 0.0), (L * 0.36, G * 0.4, G * 0.6)),
+    ]))
+    # Big head on a thick neck.
+    parts.append(("head", "skull", fur, 0.04, [
+        ("cap", neck, head, G * 0.5),
+        ("ell", head, (H * 0.95, H * 0.85, H * 0.82)),
+    ]))
+    parts.append(("head", "muzzle", accent, 0.03, [
+        ("ell", (head[0] + H * 0.55, head[1] - H * 0.22, 0.0), (H * 0.55, H * 0.42, H * 0.46)),
+    ]))
+    parts.append(("head", "nose", eye, 0.02, [
+        ("ell", (head[0] + H * 1.02, head[1] - H * 0.08, 0.0), (H * 0.13, H * 0.11, H * 0.14)),
+    ]))
+    for side in (-1, 1):
+        parts.append(("head", f"eye{side}", eye, 0.01, [
+            ("ell", (head[0] + H * 0.5, head[1] + H * 0.22, side * H * 0.42), (H * 0.11, H * 0.11, H * 0.11)),
+        ]))
+    for side, name in ((-1, "earL"), (1, "earR")):
+        base = (head[0] - H * 0.45, head[1] + H * 0.7, side * H * 0.5)
+        parts.append((name, "ear", fur, 0.03, [
+            ("ell", (base[0], base[1] + H * 0.1, base[2]), (H * 0.28, H * 0.28, H * 0.26)),
+        ]))
+    # Thick, short legs with broad paws.
+    for side, name in ((-1, "legFL"), (1, "legFR")):
+        z = side * G * 0.55
+        parts.append((name, "leg", leg, 0.04, [("cap", (L * 0.3, S - G * 0.3, z), (L * 0.3, 0.03, z), G * 0.2)]))
+        parts.append((name, "paw", accent, 0.03, [("ell", (L * 0.32, 0.04, z), (G * 0.26, G * 0.12, G * 0.24))]))
+    for side, name in ((-1, "legRL"), (1, "legRR")):
+        z = side * G * 0.55
+        parts.append((name, "leg", leg, 0.04, [("cap", (-L * 0.3, S - G * 0.3, z), (-L * 0.3, 0.03, z), G * 0.2)]))
+        parts.append((name, "paw", accent, 0.03, [("ell", (-L * 0.32, 0.04, z), (G * 0.26, G * 0.12, G * 0.24))]))
+    # Stub tail.
+    parts.append(("tail", "tail", fur, 0.03, [("cap", tail, (tail[0] - G * 0.12, tail[1] - G * 0.05, 0.0), G * 0.12)]))
+    return bones, parts
+
+
+SPECIES = {"rabbit": rabbit_parts, "deer": deer_parts, "wolf": wolf_parts, "lynx": lynx_parts, "bison": bison_parts, "goat": goat_parts, "bear": bear_parts}
 
 
 def build(key, outdir):
