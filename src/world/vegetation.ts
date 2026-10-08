@@ -59,14 +59,18 @@ export class Vegetation {
   /** Edible biomass available to a grazer at a world position. */
   forageAt(x: number, y: number, diet: number[]): Forage {
     const t = this.terrain;
-    const cx = t.worldToCellX(x);
-    const cy = t.worldToCellY(y);
+    // Read the same cell that consume() removes from, so what an animal sees
+    // as edible is what it can actually eat (interpolated reads disagreed).
+    const cx = Math.round(t.worldToCellX(x));
+    const cy = Math.round(t.worldToCellY(y));
+    if (cx < 1 || cy < 1 || cx >= t.size - 1 || cy >= t.size - 1) return { amount: 0, quality: 0 };
+    const i = cy * t.size + cx;
     let amount = 0;
     let qualitySum = 0;
     for (let L = 0; L < diet.length; L++) {
       const pref = diet[L];
       if (pref <= 0) continue;
-      const b = this.plants.layers[L].sample(cx, cy);
+      const b = this.plants.layers[L].data[i];
       if (b <= 0.01) continue;
       const edible = b * pref;
       amount += edible;
