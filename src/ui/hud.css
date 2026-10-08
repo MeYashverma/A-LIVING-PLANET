@@ -349,11 +349,27 @@
   left: var(--hud-pad);
   right: var(--hud-pad);
   bottom: var(--hud-pad);
+  pointer-events: none;
+}
+
+.hud-dock-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  min-width: 0;
+}
+
+.hud-dock-row > .hud-minimap {
+  pointer-events: auto;
+}
+
+.hud-dock-main {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
+  align-items: center;
   gap: 6px;
-  pointer-events: none;
 }
 
 #bottombar > * {
@@ -636,27 +652,25 @@
 /* Minimap                                                             */
 /* ------------------------------------------------------------------ */
 
-#minimap {
-  left: var(--hud-pad);
-  bottom: calc(var(--bottombar-h) + 18px);
-  width: 170px;
+.hud-minimap {
+  flex: none;
+  width: 128px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  pointer-events: none;
+  gap: 5px;
 }
 
-#minimap .minimap-canvas {
-  width: 170px;
-  height: 170px;
+.hud-minimap .minimap-canvas {
+  width: 128px;
+  height: 128px;
   border: 1px solid var(--hud-edge-strong);
   border-radius: 12px;
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
   background: #0c1014;
 }
 
-#minimap .minimap-compass,
-#minimap .minimap-coords {
+.hud-minimap .minimap-compass,
+.hud-minimap .minimap-coords {
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 999px;
@@ -665,11 +679,11 @@
   color: var(--text);
 }
 
-#minimap .minimap-compass {
+.hud-minimap .minimap-compass {
   align-self: flex-start;
 }
 
-#minimap .minimap-coords {
+.hud-minimap .minimap-coords {
   align-self: flex-end;
   color: var(--text-faint);
 }
@@ -677,13 +691,6 @@
 /* ------------------------------------------------------------------ */
 /* Responsive                                                          */
 /* ------------------------------------------------------------------ */
-
-@media (min-width: 1100px) {
-  /* Leave room for the minimap so the dock never sits on top of it. */
-  #bottombar {
-    left: 196px;
-  }
-}
 
 @media (max-width: 1280px) {
   .hud-seed,
@@ -744,7 +751,7 @@
     width: 92vw;
     bottom: calc(var(--bottombar-h) + 14px);
   }
-  #minimap {
+  .hud-minimap {
     display: none;
   }
 }
@@ -765,7 +772,7 @@ body.documentary #bottombar:hover {
 }
 
 body.documentary #toasts,
-body.documentary #minimap {
+body.documentary .hud-minimap {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.6s ease;

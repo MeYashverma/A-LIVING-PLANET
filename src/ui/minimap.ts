@@ -20,7 +20,7 @@ export class Minimap {
   constructor() {
     this.root = document.createElement('div');
     this.root.id = 'minimap';
-    this.root.className = 'ui';
+    this.root.className = 'hud-minimap';
     this.canvas = document.createElement('canvas');
     this.canvas.width = this.px;
     this.canvas.height = this.px;
@@ -34,7 +34,7 @@ export class Minimap {
     this.coordsLabel = document.createElement('div');
     this.coordsLabel.className = 'minimap-coords mono';
     this.root.append(this.canvas, this.compassLabel, this.coordsLabel);
-    document.body.append(this.root);
+    // The HUD mounts this inside the dock row (see hud.ts), so it never sits over the side panels.
   }
 
   /**

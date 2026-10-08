@@ -320,7 +320,13 @@ export class HUD {
     this.hintEl = el('div', 'hud-hint');
     const dockBody = el('div', 'hud-dock-body');
     dockBody.append(camGroup, scaleGroup, sandbox);
-    this.dock.append(this.hintEl, dockBody);
+    // Dock row: minimap on the left, controls beside it. The whole row sits in the
+    // bottom band that the side panels already stop above, so nothing overlaps.
+    const main = el('div', 'hud-dock-main');
+    main.append(this.hintEl, dockBody);
+    const row = el('div', 'hud-dock-row');
+    row.append(this.minimap.root, main);
+    this.dock.append(row);
     this.showToolGroup('observe');
     this.setTool('inspect');
   }
