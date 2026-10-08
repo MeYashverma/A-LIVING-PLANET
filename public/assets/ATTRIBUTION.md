@@ -55,5 +55,3 @@ to give attribution, though it is appreciated."* The CC0 1.0 deed is at
 | WebGL Water by Evan Wallace (algorithm and shader logic, adapted in `src/render/waterSim.ts`) | MIT, Copyright 2011 Evan Wallace, <http://madebyevan.com/webgl-water/> |
 | Fox skinned model and animations (`assets/models/mesh2motion-fox.glb`) | Mesh2Motion fox model, rig and clips (Walk, Run, Idle, Sit, Bite, Death) | `Mesh2Motion/mesh2motion-app` (`static/animations/fox-animations.glb`) | CC0-1.0 |
 | Horse skinned model and animations (`assets/models/mesh2motion-horse.glb`) | Mesh2Motion horse model, rig and clips | `Mesh2Motion/mesh2motion-app` (`static/animations/horse-animations.glb`) | CC0-1.0 |
-| Bird skinned model and animations (`assets/models/mesh2motion-bird.glb`) | Mesh2Motion bird model, rig and clips | `Mesh2Motion/mesh2motion-app` (`static/animations/bird-animations.glb`) | CC0-1.0 |
-| Shark skinned model and animations (`assets/models/mesh2motion-shark.glb`) | Mesh2Motion shark model, rig and clips | `Mesh2Motion/mesh2motion-app` (`static/animations/shark-animations.glb`) | CC0-1.0 |

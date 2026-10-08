@@ -32,30 +32,18 @@ const MODELS: Record<string, ModelDef> = {
     file: 'assets/models/mesh2motion-horse.glb',
     clips: { idle: 'Idle', walk: 'Walk', run: 'Run', rest: 'Sleep', die: 'Death', bite: 'Eating' },
   },
-  bird: {
-    file: 'assets/models/mesh2motion-bird.glb',
-    clips: { idle: 'Idle', walk: 'Walk', run: 'Flap', rest: 'Rest Pose', fly: 'Flap', glide: 'Glide' },
-  },
-  shark: {
-    file: 'assets/models/mesh2motion-shark.glb',
-    clips: { idle: 'Idle', walk: 'Swim Horizontal', run: 'Swim Horizontal', rest: 'Rest Pose', die: 'Dead Floating', bite: 'Bite' },
-  },
 };
 
 /** Which species use which model. Entries marked "stand-in" borrow a model of a different animal. */
+// Only species whose rigged model is a reasonable match. Everything else stays
+// on the procedural species meshes, which are closer in shape. Stand-ins for
+// lynx, bison, goat, owl, raven, heron, eagle, trout and perch were removed
+// after a visual check: the seagull, cartoon shark and generic horse did not
+// read as those animals.
 export const RIGGED_SPECIES: Record<string, string> = {
   fox: 'fox',
-  wolf: 'fox', // stand-in
-  lynx: 'fox', // stand-in
-  deer: 'horse', // stand-in
-  bison: 'horse', // stand-in
-  goat: 'horse', // stand-in
-  eagle: 'bird',
-  owl: 'bird', // stand-in
-  raven: 'bird', // stand-in
-  heron: 'bird', // stand-in
-  trout: 'shark', // stand-in
-  perch: 'shark', // stand-in
+  wolf: 'fox', // canid stand-in, same body plan
+  deer: 'horse', // ungulate stand-in, same body plan
 };
 
 interface Slot {
