@@ -1262,7 +1262,7 @@ function meter(label: string, value: number, invert = false, tone = ''): HTMLEle
 }
 
 function meterBar(value: number, tone = ''): HTMLElement {
-  const bar = el('div', 'bar');
+  const bar = el('div', 'meter');
   const i = el('i', tone);
   i.style.width = `${clamp01(value) * 100}%`;
   bar.append(i);

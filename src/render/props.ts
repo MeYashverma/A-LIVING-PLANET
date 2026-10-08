@@ -71,6 +71,7 @@ export class Props {
   }
 
   private makeSet(geo: THREE.BufferGeometry, capacity: number, kind: string, detail: boolean, bark?: MaterialSet): InstancedSet {
+    // The bark shader samples this only when uHasBark is set, but the sampler must still be bound.
     const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 });
     const uniforms = {
       uTime: { value: 0 },
@@ -80,7 +81,7 @@ export class Props {
       uSnow: { value: 0 },
       uMoon: { value: 0 },
       uBarkScale: { value: 3.0 },
-      uBarkColor: { value: bark ? bark.color : null },
+      uBarkColor: { value: bark ? bark.color : blankTexture() },
       uBarkNormal: { value: bark ? bark.normal : null },
       uBarkRough: { value: bark ? bark.rough : null },
       uHasBark: { value: bark ? 1 : 0 },
@@ -153,9 +154,13 @@ export class Props {
           varying float vBurn;
           varying float vSnow;
           varying float vLocalY;
+          varying vec3 vLocalPos;
           uniform float uAutumn;
           uniform float uSnow;
           uniform float uMoon;
+          uniform float uBarkScale;
+          uniform sampler2D uBarkColor;
+          uniform float uHasBark;
         `,
         )
         .replace(
@@ -525,6 +530,15 @@ export class Props {
 /* ------------------------------------------------------------------ */
 /* Geometry                                                            */
 /* ------------------------------------------------------------------ */
+
+let blankTex: THREE.DataTexture | null = null;
+function blankTexture(): THREE.DataTexture {
+  if (!blankTex) {
+    blankTex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    blankTex.needsUpdate = true;
+  }
+  return blankTex;
+}
 
 function tinted(geo: THREE.BufferGeometry, color: [number, number, number], variance = 0.07, seed = 1): THREE.BufferGeometry {
   const pos = geo.getAttribute('position') as THREE.BufferAttribute;

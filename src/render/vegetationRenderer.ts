@@ -348,7 +348,17 @@ export class GroundCover {
     let grassN = 0;
     let shrubN = 0;
     let reedN = 0;
-    const rng = world.rng;
+    // Placement is a pure function of the cell: the same cell always gets the
+    // same tufts. Drawing from the simulation RNG here made every refresh (on
+    // every zoom step) reshuffle the whole meadow.
+    let cellIndex = 0;
+    let cellSalt = 0;
+    const cellRand = (): number => {
+      let h = (cellIndex * 374761393 + ++cellSalt * 668265263) | 0;
+      h = Math.imul(h ^ (h >>> 13), 1274126177);
+      h ^= h >>> 16;
+      return (h >>> 0) / 4294967296;
+    };
     const dummy = new THREE.Object3D();
     const grassHealth = this.grassGeo.getAttribute('aHealth') as THREE.InstancedBufferAttribute;
     const grassPhase = this.grassGeo.getAttribute('aPhase') as THREE.InstancedBufferAttribute;
@@ -368,12 +378,14 @@ export class GroundCover {
         if (cx < 1 || cy < 1 || cx >= t.size - 1 || cy >= t.size - 1) continue;
         const i = cy * t.size + cx;
         if (!t.land[i]) continue;
+        cellIndex = i;
+        cellSalt = 0;
         const canopy = canopyField.data[i];
         const snow = snowField.data[i];
         const biome = t.biome.data[i] as Biome;
         const def = BIOMES[biome];
-        const jitterX = rng.next();
-        const jitterY = rng.next();
+        const jitterX = cellRand();
+        const jitterY = cellRand();
         const wx = t.cellToWorldX(cx) + (jitterX - 0.5) * t.cellUnits;
         const wz = t.cellToWorldY(cy) + (jitterY - 0.5) * t.cellUnits;
         const wy = t.elevationOf(t.height.data[i]);
@@ -383,29 +395,29 @@ export class GroundCover {
         const tufts = Math.min(3, Math.round(grassDensity * 2.6));
         const viewDist = Math.hypot(cx - cx0, cy - cy0);
         for (let k = 0; k < tufts && grassN < this.grassCap; k++) {
-          if (viewDist > grassR - 4 && rng.next() < 0.5) continue;
-          dummy.position.set(wx + (rng.next() - 0.5) * t.cellUnits * 0.8, wy - 0.03, wz + (rng.next() - 0.5) * t.cellUnits * 0.8);
-          const scale = (0.55 + rng.next() * 0.8) * (0.7 + grassDensity * 0.6);
-          dummy.scale.set(scale, scale * (0.8 + rng.next() * 0.6), scale);
-          dummy.rotation.y = rng.next() * TAU;
+          if (viewDist > grassR - 4 && cellRand() < 0.5) continue;
+          dummy.position.set(wx + (cellRand() - 0.5) * t.cellUnits * 0.8, wy - 0.03, wz + (cellRand() - 0.5) * t.cellUnits * 0.8);
+          const scale = (0.55 + cellRand() * 0.8) * (0.7 + grassDensity * 0.6);
+          dummy.scale.set(scale, scale * (0.8 + cellRand() * 0.6), scale);
+          dummy.rotation.y = cellRand() * TAU;
           dummy.updateMatrix();
           this.grass.setMatrixAt(grassN, dummy.matrix);
           grassHealth.setX(grassN, clamp01(0.35 + grassDensity + t.soilMoisture.data[i] * 0.3));
-          grassPhase.setX(grassN, rng.next());
+          grassPhase.setX(grassN, cellRand());
           grassN++;
         }
 
         // Shrubs prefer moister, more fertile ground and open sites.
         const shrubDensity = clamp01(shrubField.data[i]) * clamp01(1 - canopy * 0.9) * clamp01(1 - snow);
-        if (shrubDensity > 0.22 && rng.next() < shrubDensity * 0.9 && shrubN < this.shrubCap) {
+        if (shrubDensity > 0.22 && cellRand() < shrubDensity * 0.9 && shrubN < this.shrubCap) {
           dummy.position.set(wx, wy - 0.05, wz);
-          const scale = (0.7 + rng.next() * 0.9) * clamp01(0.5 + (def.plants[1] ?? 1));
-          dummy.scale.set(scale, scale * (0.8 + rng.next() * 0.5), scale);
-          dummy.rotation.y = rng.next() * TAU;
+          const scale = (0.7 + cellRand() * 0.9) * clamp01(0.5 + (def.plants[1] ?? 1));
+          dummy.scale.set(scale, scale * (0.8 + cellRand() * 0.5), scale);
+          dummy.rotation.y = cellRand() * TAU;
           dummy.updateMatrix();
           this.shrub.setMatrixAt(shrubN, dummy.matrix);
           shrubHealth.setX(shrubN, clamp01(shrubDensity + 0.2));
-          shrubPhase.setX(shrubN, rng.next());
+          shrubPhase.setX(shrubN, cellRand());
           shrubN++;
         }
 
@@ -413,15 +425,15 @@ export class GroundCover {
         // are part of the ground colour rather than geometry.
         const wet = t.waterDepth.data[i];
         const reedDensity = clamp01(reedField.data[i]) * (wet > 0.02 && wet < 0.7 ? 1 : 0.25);
-        if (reedDensity > 0.2 && rng.next() < reedDensity * 0.8 && reedN < this.reedCap) {
+        if (reedDensity > 0.2 && cellRand() < reedDensity * 0.8 && reedN < this.reedCap) {
           dummy.position.set(wx, Math.max(wy, wy + Math.min(wet, 0.6)) - 0.1, wz);
-          const scale = (0.7 + rng.next() * 0.7) * (0.8 + reedDensity * 0.5);
-          dummy.scale.set(scale, scale * (0.9 + rng.next() * 0.7), scale);
-          dummy.rotation.y = rng.next() * TAU;
+          const scale = (0.7 + cellRand() * 0.7) * (0.8 + reedDensity * 0.5);
+          dummy.scale.set(scale, scale * (0.9 + cellRand() * 0.7), scale);
+          dummy.rotation.y = cellRand() * TAU;
           dummy.updateMatrix();
           this.reed.setMatrixAt(reedN, dummy.matrix);
           reedHealth.setX(reedN, clamp01(reedDensity + 0.2));
-          reedPhase.setX(reedN, rng.next());
+          reedPhase.setX(reedN, cellRand());
           reedN++;
         }
         void mossField;

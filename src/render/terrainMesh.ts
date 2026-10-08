@@ -373,37 +373,68 @@ export class TerrainMesh {
   /** Rebuild the water surface geometry from the hydrology fields. */
   rebuildWater(): void {
     const t = this.world.terrain;
+    const n = t.size;
+    const depthData = t.waterDepth.data;
+    const heightData = t.height.data;
+    // Each simulation cell is split into SUB x SUB quads. Depth and ground are
+    // interpolated between cell centres, so the shoreline follows a smooth
+    // contour instead of stepping along the 2.5 m grid. The simulation itself
+    // is unchanged: this only changes how its fields are drawn.
+    const SUB = 3;
+    const at = (data: ArrayLike<number>, x: number, y: number): number => {
+      const cx = Math.min(n - 1, Math.max(0, x));
+      const cy = Math.min(n - 1, Math.max(0, y));
+      const x0 = Math.floor(cx);
+      const y0 = Math.floor(cy);
+      const x1 = Math.min(n - 1, x0 + 1);
+      const y1 = Math.min(n - 1, y0 + 1);
+      const fx = cx - x0;
+      const fy = cy - y0;
+      const a = data[y0 * n + x0] * (1 - fx) + data[y0 * n + x1] * fx;
+      const b = data[y1 * n + x0] * (1 - fx) + data[y1 * n + x1] * fx;
+      return a * (1 - fy) + b * fy;
+    };
     const pos: number[] = [];
     const dep: number[] = [];
     const idx: number[] = [];
-    const map = new Map<number, number>();
-    for (let j = 0; j < t.size - 1; j++) {
-      for (let i = 0; i < t.size - 1; i++) {
-        const d00 = t.waterDepth.data[j * t.size + i];
-        const d10 = t.waterDepth.data[j * t.size + i + 1];
-        const d01 = t.waterDepth.data[(j + 1) * t.size + i];
-        const d11 = t.waterDepth.data[(j + 1) * t.size + i + 1];
+    for (let j = 0; j < n - 1; j++) {
+      for (let i = 0; i < n - 1; i++) {
+        const d00 = depthData[j * n + i];
+        const d10 = depthData[j * n + i + 1];
+        const d01 = depthData[(j + 1) * n + i];
+        const d11 = depthData[(j + 1) * n + i + 1];
         if (d00 < 0.012 && d10 < 0.012 && d01 < 0.012 && d11 < 0.012) continue;
-        const corners: [number, number][] = [
-          [i, j],
-          [i + 1, j],
-          [i, j + 1],
-          [i + 1, j + 1],
-        ];
-        const ids: number[] = [];
-        for (const [ci, cj] of corners) {
-          const key = cj * t.size + ci;
-          let id = map.get(key);
-          if (id === undefined) {
-            id = dep.length;
-            map.set(key, id);
-            const depth = Math.max(0.02, t.waterDepth.data[key]);
-            pos.push(t.cellToWorldX(ci), t.elevationOf(t.height.data[key]) + depth, t.cellToWorldY(cj));
-            dep.push(depth);
+        // Only shorelines and banks need subdividing. Deep, even water and dry
+        // ground stay one quad per cell, which keeps the mesh affordable.
+        const lo = Math.min(d00, d10, d01, d11);
+        const hi = Math.max(d00, d10, d01, d11);
+        const shore = lo < 0.012 || hi - lo > 0.05;
+        const sub = shore ? SUB : 1;
+        const stepN = 1 / sub;
+        for (let sj = 0; sj < sub; sj++) {
+          for (let si = 0; si < sub; si++) {
+            const x0 = i + si * stepN;
+            const y0 = j + sj * stepN;
+            const x1 = x0 + stepN;
+            const y1 = y0 + stepN;
+            const quad: [number, number][] = [
+              [x0, y0],
+              [x1, y0],
+              [x0, y1],
+              [x1, y1],
+            ];
+            const depths = quad.map(([x, y]) => at(depthData, x, y));
+            if (depths.every((d) => d < 0.012)) continue;
+            const base = pos.length / 3;
+            quad.forEach(([x, y], k) => {
+              const depth = Math.max(0.02, depths[k]);
+              const ground = t.elevationOf(at(heightData, x, y));
+              pos.push(t.cellToWorldX(x), ground + depth, t.cellToWorldY(y));
+              dep.push(depth);
+            });
+            idx.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
           }
-          ids.push(id);
         }
-        idx.push(ids[0], ids[2], ids[1], ids[1], ids[2], ids[3]);
       }
     }
     this.waterGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));

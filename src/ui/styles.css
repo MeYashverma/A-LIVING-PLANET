@@ -421,7 +421,7 @@ input[type='checkbox'] {
   white-space: nowrap;
 }
 
-.bar {
+.meter {
   position: relative;
   height: 4px;
   background: #10151a;
@@ -429,22 +429,22 @@ input[type='checkbox'] {
   overflow: hidden;
 }
 
-.bar > i {
+.meter > i {
   position: absolute;
   inset: 0 auto 0 0;
   background: var(--accent-dim);
   display: block;
 }
 
-.bar > i.good {
+.meter > i.good {
   background: var(--good);
 }
 
-.bar > i.bad {
+.meter > i.bad {
   background: var(--bad);
 }
 
-.bar > i.water {
+.meter > i.water {
   background: var(--water);
 }
 
