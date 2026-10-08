@@ -3,6 +3,7 @@
  * dialogs. Everything it shows is read from the world through the host — the
  * numbers here are the same numbers the simulation uses.
  */
+import { Minimap } from './minimap';
 import { SEASON_NAMES } from '../core/time';
 import { TIME } from '../core/config';
 import { QUALITY_PRESETS, type QualityLevel } from '../core/config';
@@ -68,6 +69,7 @@ export class HUD {
   private clockEl!: HTMLElement;
   private climateEl!: HTMLElement;
   private perfEl!: HTMLElement;
+  private minimap: Minimap;
   private speedButtons = new Map<number, HTMLButtonElement>();
   private toolButtons = new Map<ToolKind, HTMLButtonElement>();
   private cameraButtons = new Map<CameraMode, HTMLButtonElement>();
@@ -92,6 +94,7 @@ export class HUD {
     this.modalLayer.id = 'modal-layer';
     this.modalLayer.style.display = 'none';
     document.body.append(this.topbar, this.bottombar, this.toasts, this.captions, this.modalLayer);
+    this.minimap = new Minimap();
     this.buildTop();
     this.buildBottom();
     this.trackBarHeights();
@@ -270,6 +273,7 @@ export class HUD {
     const climate = world.climate;
     const weather = climate.state.charAt(0).toUpperCase() + climate.state.slice(1);
     this.climateEl.textContent = `${weather} ${Math.round(climate.temperatureAt(0, 0))}°C ${Math.round(climate.windSpeed)}m/s`;
+    this.minimap.update(world, renderer.rig.focus, renderer.rig.yaw);
     const stats = renderer.stats;
     this.perfEl.textContent = `${stats.fps} fps · ${world.stats.simMs.toFixed(1)} ms sim · ${world.stats.creatures} animals`;
     for (const [value, b] of this.speedButtons) {

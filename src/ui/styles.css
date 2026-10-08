@@ -936,3 +936,42 @@ body.high-contrast {
     bottom: 46vh;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Minimap and compass                                                 */
+/* ------------------------------------------------------------------ */
+
+#minimap {
+  left: 10px;
+  bottom: calc(var(--bottombar-h) + 14px);
+  width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: none;
+}
+
+#minimap .minimap-canvas {
+  width: 160px;
+  height: 160px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  background: #0c1014;
+}
+
+#minimap .minimap-compass,
+#minimap .minimap-coords {
+  align-self: flex-start;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(12, 16, 20, 0.7);
+  color: var(--text, #e8e2d0);
+}
+
+@media (max-width: 720px) {
+  #minimap {
+    display: none;
+  }
+}
