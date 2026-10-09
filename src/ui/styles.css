@@ -748,3 +748,15 @@ body.documentary #rightcol {
   pointer-events: none;
   transition: opacity 0.6s ease;
 }
+
+/* Users who ask for less motion get instant state changes, not transitions. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
