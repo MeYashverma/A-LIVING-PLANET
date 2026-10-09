@@ -46,6 +46,9 @@ export interface SimStats {
  * The world: terrain, climate, water, soil, plants, animals, disease, fire and
  * the history they generate. Everything the interface shows is read from here.
  */
+/** Real milliseconds per frame the simulation may use. The rest goes to rendering. */
+const FRAME_SIM_BUDGET_MS = 5;
+
 export class World {
   readonly seed: string;
   name: string;
@@ -344,25 +347,28 @@ export class World {
   update(realSeconds: number): number {
     const started = performance.now();
     const owed = Math.min(this.clock.minutesOwed(realSeconds), TIME.maxMinutesPerFrame);
-    // Whole steps only. A frame at 1x owes about 0.017 minutes, and running a
-    // full step for each frame's sliver of time cost a step per frame. Time
-    // accumulates here instead, so a step runs once per simulated step.
+    // Time accumulates and is paid out in whole steps. A frame at 1x owes about
+    // 0.017 minutes, so a step runs about once a second, not once a frame.
     this.owedMinutes += owed;
     const stepLen = this.stepLength();
+    const deadline = started + FRAME_SIM_BUDGET_MS;
     let steps = 0;
-    const budgetMs = 9;
-    while (this.owedMinutes >= stepLen - 1e-9) {
-      this.step(stepLen);
-      this.owedMinutes -= stepLen;
-      steps++;
-      if (steps > 6 && performance.now() - started > budgetMs) {
-        // If we cannot keep up, drop the rest of the owed time rather than
-        // stalling the frame: the clock falls behind a little, not forever.
-        break;
+    for (;;) {
+      if (!this.stepJob) {
+        if (this.owedMinutes < stepLen - 1e-9) break;
+        this.startStep(stepLen);
+        this.owedMinutes -= stepLen;
       }
-      if (steps > 180) break;
+      // A step's animals are run in slices across frames. Out of time, the rest
+      // waits for the next frame, so one step never stalls one frame.
+      if (!this.runCreatures(deadline)) break;
+      this.finishStep();
+      steps++;
+      if (performance.now() > deadline || steps > 180) break;
     }
-    this.owedMinutes = Math.min(this.owedMinutes, stepLen);
+    // Time the budget cannot pay out is dropped rather than building up, so the
+    // clock never runs far ahead of the simulation.
+    this.owedMinutes = Math.min(this.owedMinutes, stepLen * 2);
     this.stats.stepsThisFrame = steps;
     this.stats.simMs = performance.now() - started;
     this.lastSimMs = this.stats.simMs;
@@ -371,6 +377,8 @@ export class World {
   }
 
   private owedMinutes = 0;
+  /** The step whose animals are part-way through being run, if any. */
+  private stepJob: { dt: number; cursor: number } | null = null;
 
   /**
    * In-game time for the renderer. The clock only moves in whole steps, so this
@@ -403,8 +411,20 @@ export class World {
     }
   }
 
-  /** A single simulation step of `dt` in-game minutes. */
+  /** A whole simulation step. Fast-forward and the tools use this; the frame loop slices it. */
   step(dt: number): void {
+    // Finish a step that the frame loop has part-way through, so its tail is not lost.
+    if (this.stepJob) {
+      this.runCreatures(Infinity);
+      this.finishStep();
+    }
+    this.startStep(dt);
+    this.runCreatures(Infinity);
+    this.finishStep();
+  }
+
+  /** The environment part of a step, then the start of the animal loop (run by runCreatures). */
+  private startStep(dt: number): void {
     try {
       this.clock.advanceMinutes(dt);
       this.climate.beginStep(dt);
@@ -418,12 +438,45 @@ export class World {
       this.fire.update(dt, this.terrain.soilMoisture.data);
       if (this.due('agg', dt, 6)) this.aggregates.update(6);
       this.updateCreatureGrid();
+      this.stepJob = { dt, cursor: 0 };
+    } catch (err) {
+      this.reportError('world:step', err);
+      this.stepJob = { dt, cursor: this.creatures.capacity };
+    }
+  }
 
-      // Individual animals think and move.
-      const c = this.creatures;
-      for (let i = 0; i < c.capacity; i++) {
-        if (c.alive[i]) simulateCreature(this, i, dt);
+  /**
+   * Run the animals of the current step, from the cursor, until the deadline.
+   * Returns true when every animal has been run. The loop checks the clock every
+   * 32 animals, so each call makes progress even with a deadline already past.
+   */
+  private runCreatures(deadlineMs: number): boolean {
+    const job = this.stepJob;
+    if (!job) return true;
+    const c = this.creatures;
+    try {
+      let n = 0;
+      for (; job.cursor < c.capacity; job.cursor++) {
+        if (c.alive[job.cursor]) simulateCreature(this, job.cursor, job.dt);
+        if ((++n & 31) === 0 && performance.now() > deadlineMs) {
+          job.cursor++;
+          return false;
+        }
       }
+    } catch (err) {
+      this.reportError('world:creatures', err);
+    }
+    return true;
+  }
+
+  /** The end of a step: population turnover, cadence events, and the daily rollover. */
+  private finishStep(): void {
+    const job = this.stepJob;
+    this.stepJob = null;
+    if (!job) return;
+    const dt = job.dt;
+    const c = this.creatures;
+    try {
       c.tick(dt, this.clock.day);
       c.ageTrails(dt);
 
