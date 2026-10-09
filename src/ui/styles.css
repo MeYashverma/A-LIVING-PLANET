@@ -93,7 +93,10 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: var(--col-max-h);
+  /* Stop above the minimap and the scale bar, and scroll rather than clip. */
+  max-height: calc(100vh - var(--topbar-h) - 232px);
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 #rightcol {
@@ -104,6 +107,8 @@ textarea {
   flex-direction: column;
   gap: 8px;
   max-height: var(--col-max-h);
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .panel {

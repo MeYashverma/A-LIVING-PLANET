@@ -684,7 +684,9 @@
 }
 
 .hud-minimap .minimap-coords {
-  align-self: flex-end;
+  /* Above the map, clear of the scale bar drawn at the bottom-left corner. */
+  order: -1;
+  align-self: flex-start;
   color: var(--text-faint);
 }
 
