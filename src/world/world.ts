@@ -407,7 +407,8 @@ export class World {
   }
 
   /** Advance simulation by an exact number of minutes (fast-forward, catch-up). */
-  advance(minutes: number, budgetMs = 4000): void {
+  /** Run whole steps until `minutes` have passed or the time budget is spent. Returns the minutes run. */
+  advance(minutes: number, budgetMs = 4000): number {
     const started = performance.now();
     let remaining = minutes;
     while (remaining > 0.001) {
@@ -416,6 +417,7 @@ export class World {
       remaining -= dt;
       if (performance.now() - started > budgetMs) break;
     }
+    return Math.max(0, minutes - Math.max(0, remaining));
   }
 
   /** A whole simulation step. Fast-forward and the tools use this; the frame loop slices it. */

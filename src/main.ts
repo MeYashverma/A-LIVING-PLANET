@@ -90,13 +90,12 @@ async function main(): Promise<void> {
         current.settings,
         (patch) => {
           current.applySettings(patch);
-          renderer?.applySettings(current.settings);
-          ambience.setVolumes(current.settings.masterVolume, current.settings.ambienceVolume, current.settings.musicVolume);
-          renderer!.setViewOptions({ showLabels: current.settings.showLabels, showTrails: current.settings.showTrails }, current.world);
+          applyAllSettings();
         },
         () => {
           current.resetSettings();
-          renderer?.applySettings(current.settings);
+          applyAllSettings();
+          return current.settings;
         },
       ),
     onHelp: () => hud.showHelp(),
@@ -111,6 +110,13 @@ async function main(): Promise<void> {
   /* ---------------------------------------------------------------- */
   /* New world / library                                              */
   /* ---------------------------------------------------------------- */
+
+  /** Push the current settings to every system that reads them. */
+  function applyAllSettings(): void {
+    renderer?.applySettings(current.settings);
+    ambience.setVolumes(current.settings.masterVolume, current.settings.ambienceVolume, current.settings.musicVolume);
+    renderer?.setViewOptions({ showLabels: current.settings.showLabels, showTrails: current.settings.showTrails }, current.world);
+  }
 
   function promptNewWorld(): void {
     hud.showWorldCreator(
@@ -262,7 +268,9 @@ async function main(): Promise<void> {
 
   function swapWorld(next: SimHost): void {
     current = next;
-    host.world = next.world; // panels/HUD read through the original host object
+    // Speed, jump, tool and spawn controls must act on the host that runs the frame loop.
+    hud.bindHost(next);
+    host.world = next.world; // panels read through the original host object
     rebuildForCurrentWorld();
   }
 
@@ -515,11 +523,12 @@ async function main(): Promise<void> {
         current.setSpeed(speeds[idx - 1]);
         break;
       }
+      // Shift+J reports the key as 'J', so the shifted case is the week jump.
       case 'j':
-        current.jump(ev.shiftKey ? 'week' : 'day');
+        current.jump('day');
         break;
       case 'J':
-        current.jump('month');
+        current.jump('week');
         break;
       case 'f':
       case 'F':
@@ -550,8 +559,10 @@ async function main(): Promise<void> {
         hud.setScale(next);
         break;
       }
-      case 'd':
-      case 'D':
+      // Documentary moved off D: D and A/W/S flying keys are the same letters and
+      // the flight keys return before this switch, so D never reached this case.
+      case 'n':
+      case 'N':
         toggleDocumentary();
         break;
       case 'l':

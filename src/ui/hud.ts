@@ -91,6 +91,12 @@ const JUMPS: [string, 'hour' | 'day' | 'week' | 'month' | 'year', string][] = [
   ['+1y', 'year', 'Advance one year'],
 ];
 
+/** Show a segmented or toggle button as on, for sighted users and assistive tech alike. */
+function setOn(b: HTMLElement, on: boolean): void {
+  b.classList.toggle('on', on);
+  b.setAttribute('aria-pressed', String(on));
+}
+
 export class HUD {
   private host: SimHost;
   private cb: HudCallbacks;
@@ -120,6 +126,22 @@ export class HUD {
   private lastCaptionsKey = '';
   private minimap: Minimap;
 
+  private hostUnsubscribe: (() => void)[] = [];
+
+  /**
+   * Point the controls at the host that now owns the world (after a new world or
+   * an import). Toasts and captions come from the host, so they move with it;
+   * left on the old host they were silently dropped.
+   */
+  bindHost(host: SimHost): void {
+    for (const off of this.hostUnsubscribe) off();
+    this.host = host;
+    this.hostUnsubscribe = [
+      host.onToast((text, kind) => this.toast(text, kind)),
+      host.onCaption((text, subject) => this.setCaption(text, subject)),
+    ];
+  }
+
   constructor(host: SimHost, cb: HudCallbacks) {
     this.host = host;
     this.cb = cb;
@@ -141,8 +163,7 @@ export class HUD {
     this.buildTop();
     this.buildDock();
     this.trackBarHeights();
-    host.onToast((text, kind) => this.toast(text, kind));
-    host.onCaption((text, subject) => this.setCaption(text, subject));
+    this.bindHost(host);
   }
 
   /**
@@ -229,7 +250,7 @@ export class HUD {
     const actions = el('div', 'hud-actions');
     actions.append(
       iconButton('Panels', 'Show or hide the side panels (Tab)', () => this.cb.onTogglePanels(), ICON.panels),
-      iconButton('Observer', 'Documentary mode: quiet, captioned observation (D)', () => this.cb.onDocumentary(), ICON.eye),
+      iconButton('Observer', 'Documentary mode: quiet, captioned observation (N)', () => this.cb.onDocumentary(), ICON.eye),
       iconButton('Settings', 'Settings', () => this.cb.onSettings(), ICON.gear),
       iconButton('Help', 'Field manual (?)', () => this.cb.onHelp(), ICON.help),
     );
@@ -333,7 +354,7 @@ export class HUD {
 
   private showToolGroup(group: ToolGroup): void {
     this.activeGroup = group;
-    for (const [g, b] of this.toolGroupButtons) b.classList.toggle('on', g === group);
+    for (const [g, b] of this.toolGroupButtons) setOn(b, g === group);
     this.toolRow.replaceChildren();
     for (const t of TOOLS.filter((x) => x.group === group)) {
       const b = button(t.label, 'hud-tool', () => this.cb.onTool(t.tool));
@@ -373,21 +394,21 @@ export class HUD {
     this.perfEl.textContent = `${stats.fps} fps · ${world.stats.simMs.toFixed(1)} ms · ${world.stats.creatures} animals`;
     for (const [value, b] of this.speedButtons) {
       const on = value === 0 ? clock.paused : !clock.paused && clock.speedIndex === TIME.speedSteps.indexOf(value as never);
-      b.classList.toggle('on', on);
+      setOn(b, on);
     }
   }
 
   setCameraMode(mode: CameraMode): void {
-    for (const [m, b] of this.cameraButtons) b.classList.toggle('on', m === mode);
+    for (const [m, b] of this.cameraButtons) setOn(b, m === mode);
   }
 
   setScale(level: ScaleLevel): void {
-    for (const [l, b] of this.scaleButtons) b.classList.toggle('on', l === level);
+    for (const [l, b] of this.scaleButtons) setOn(b, l === level);
   }
 
   setTool(tool: ToolKind): void {
     this.host.tool = tool;
-    for (const [t, b] of this.toolButtons) b.classList.toggle('on', t === tool);
+    for (const [t, b] of this.toolButtons) setOn(b, t === tool);
     const found = TOOLS.find((t) => t.tool === tool);
     if (found) {
       this.hintEl.textContent = found.hint;
@@ -512,7 +533,7 @@ export class HUD {
       ['Double-click', 'Select an animal and follow it'],
       ['F G C O V', 'Free, Follow, Cinematic, Overhead, Close cameras'],
       ['P', 'Cycle Planet → Region → Local → Organism views'],
-      ['D', 'Documentary mode: quiet, captioned observation'],
+      ['N', 'Documentary mode: quiet, captioned observation'],
       ['Tab', 'Show or hide the side panels'],
       ['L', 'World library (save, load, export)'],
       ['?', 'This panel'],
@@ -534,7 +555,8 @@ export class HUD {
     this.showModal({ title: 'Field manual', body });
   }
 
-  showSettings(settings: Settings, onChange: (patch: Partial<Settings>) => void, onReset: () => void): void {
+  /** `onReset` returns the restored settings, so the controls can show them. */
+  showSettings(settings: Settings, onChange: (patch: Partial<Settings>) => void, onReset: () => Settings): void {
     const body = el('div');
     const add = (label: string, control: HTMLElement) => {
       const field = el('div', 'field');
@@ -585,7 +607,8 @@ export class HUD {
       cb.addEventListener('change', () => onChange({ [key]: cb.checked } as Partial<Settings>));
       add(label, cb);
     }
-    this.showModal({ title: 'Settings', body, actions: [{ label: 'Reset to defaults', run: () => onReset() }] });
+    // Reset redraws the dialog so every control shows the restored values.
+    this.showModal({ title: 'Settings', body, actions: [{ label: 'Reset to defaults', run: () => this.showSettings(onReset(), onChange, onReset) }] });
   }
 
   showReport(report: { title: string; lines: string[] }, onDismiss: () => void): void {
