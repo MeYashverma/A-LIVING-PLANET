@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { createGradePass } from './grade';
 import { clamp, clamp01, lerp } from '../core/math';
 import { QUALITY_PRESETS, RENDER } from '../core/config';
 import type { Settings } from '../core/events';
@@ -162,6 +163,8 @@ export class WorldRenderer {
     }
     const output = new OutputPass();
     composer.addPass(output);
+    // Grade after the output pass: it works on display colour, as a photo grade does.
+    composer.addPass(createGradePass());
     composer.setPixelRatio(this.pixelRatio);
     this.composer = composer;
   }
