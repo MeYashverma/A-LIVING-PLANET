@@ -93,10 +93,10 @@ export class TextureLibrary {
         );
       });
 
-    const materialSet = async (key: string, folder: string, repeat: number): Promise<MaterialSet> => ({
-      color: await loadOne(`${folder}/${key}_color.jpg`, true, repeat),
-      normal: await loadOne(`${folder}/${key}_normal.jpg`, false, repeat),
-      rough: await loadOne(`${folder}/${key}_rough.jpg`, false, repeat),
+    const materialSet = async (key: string, folder: string, repeat: number, ext = 'jpg'): Promise<MaterialSet> => ({
+      color: await loadOne(`${folder}/${key}_color.${ext}`, true, repeat),
+      normal: await loadOne(`${folder}/${key}_normal.${ext}`, false, repeat),
+      rough: await loadOne(`${folder}/${key}_rough.${ext}`, false, repeat),
     });
 
     const groundKeys: GroundKey[] = ['grass', 'sand', 'rock', 'snow', 'dirt', 'moss', 'cliff', 'gravel'];
@@ -111,7 +111,7 @@ export class TextureLibrary {
     const barkKeys: BarkKey[] = ['pine', 'oak', 'birch'];
     for (const key of barkKeys) {
       jobs.push(
-        materialSet(`bark_${key}`, 'assets/gen', 1).then((set) => {
+        materialSet(`bark_${key}`, 'assets/gen', 1, 'png').then((set) => {
           this.bark[key] = set;
         }),
       );

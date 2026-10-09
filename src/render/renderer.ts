@@ -100,7 +100,7 @@ export class WorldRenderer {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.02;
     this.renderer.shadowMap.enabled = preset.shadow > 0;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.domElement.style.display = 'block';
     this.renderer.domElement.style.width = '100%';

@@ -82,7 +82,7 @@ function bushGeometry(): THREE.BufferGeometry {
     [-0.1, 0.16, 0.2, 0.24],
   ];
   const parts = lobes.map(([x, y, z, r]) => {
-    const g = new THREE.IcosahedronGeometry(r, 1).toNonIndexed();
+    const g = new THREE.IcosahedronGeometry(r, 1);
     if (g.getAttribute('uv')) g.deleteAttribute('uv');
     g.scale(1, 0.8, 1);
     g.translate(x, y + r * 0.8, z);

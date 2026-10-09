@@ -258,7 +258,7 @@ export class TerrainMesh {
           // Flat water (lakes) has no slope and keeps the global drift.
           vec4 fl = texture2D(uFlowTex, (vWorld.xz + uFlowHalf) / (2.0 * uFlowHalf));
           vec2 fdir = fl.rg * 2.0 - 1.0;
-          vec2 flow = uWind * 0.004 + uFlow + fdir * fl.b * 0.05;
+          vec2 flow = uWind * 0.004 + uFlow + fdir * fl.b * 0.12;
           vec2 uv1 = vUv * 0.32 + flow * uTime * 3.0;
           vec2 uv2 = vUv * 0.11 - flow * uTime * 1.7 + vec2(0.37, 0.11);
           vec3 n1 = texture2D(uNormalMap, uv1).xyz * 2.0 - 1.0;
@@ -306,8 +306,8 @@ export class TerrainMesh {
           vec2 fdn = fd / max(length(fd), 1e-3);
           vec2 fAcross = vec2(-fdn.y, fdn.x);
           float streakNoise = texture2D(uFoamMap, vec2(dot(vWorld.xz, fAcross) * 0.045, dot(vWorld.xz, fdn) * 0.012 - uTime * 0.22)).r;
-          float streakMask = smoothstep(0.56, 0.86, streakNoise) * clamp(flw.b * 3.0, 0.0, 1.0) * smoothstep(0.02, 0.15, vDepth);
-          colour = mix(colour, colour * 1.3 + vec3(0.05), streakMask * 0.5);
+          float streakMask = smoothstep(0.5, 0.8, streakNoise) * flw.b * smoothstep(0.02, 0.15, vDepth);
+          colour = mix(colour, colour * 1.35 + vec3(0.07, 0.08, 0.08), streakMask * 0.7);
 
           // Sun glint from a tight highlight lobe, widened when the wind
           // roughens the surface.
@@ -544,7 +544,9 @@ export class TerrainMesh {
         const grade = (t.elevationOf(h[i]) - t.elevationOf(h[j])) / (t.cellUnits * len);
         r = Math.round((dx / len) * 0.5 * 255 + 127.5);
         g = Math.round((dy / len) * 0.5 * 255 + 127.5);
-        b = Math.round(Math.min(1, Math.max(0, grade * 3)) * 255);
+        // Every wet cell that drains somewhere flows, even on gentle rivers:
+        // the floor keeps the direction visible; steeper cells flow faster.
+        b = Math.round(Math.min(1, Math.max(0.3, grade * 40)) * 255);
       }
       bytes[i * 4] = r;
       bytes[i * 4 + 1] = g;
