@@ -46,6 +46,11 @@ export interface SimStats {
  * The world: terrain, climate, water, soil, plants, animals, disease, fire and
  * the history they generate. Everything the interface shows is read from here.
  */
+/** Real milliseconds per frame the simulation may use. The rest goes to rendering. */
+const FRAME_SIM_BUDGET_MS = 5;
+/** Open the app with ?passlog to print per-pass maxima every 25 timed passes. */
+const PASS_LOG = typeof location !== 'undefined' && location.search.includes('passlog');
+
 export class World {
   readonly seed: string;
   name: string;
@@ -85,7 +90,12 @@ export class World {
   errors: string[] = [];
   private lastDay = 1;
   private accumulator = 0;
-  private cadence: Record<string, number> = {};
+  /**
+   * Time since each cadence pass last ran, in sim minutes. Soil, vegetation and
+   * aggregates all run every 6 minutes; starting them at different offsets puts
+   * them on different steps, so their costs no longer stack into one frame.
+   */
+  private cadence: Record<string, number> = { soil: 5, veg: 4, agg: 2 };
   private notifyCooldown = new Map<string, number>();
   private lastSimMs = 0;
 
@@ -239,6 +249,10 @@ export class World {
       raven: 10,
       bear: 2,
       trout: 90,
+      goat: 24,
+      lynx: 2,
+      perch: 40,
+      heron: 3,
     };
     const scale = clamp01(this.params.seeding) * (this.terrain.size / 288);
     for (let s = 0; s < SPECIES.length; s++) {
@@ -339,40 +353,62 @@ export class World {
   /** Advance the world by real time. Returns simulated minutes advanced. */
   update(realSeconds: number): number {
     const started = performance.now();
-    const target = this.clock.update(realSeconds);
-    if (target <= 0) return 0;
-    let remaining = Math.min(target, TIME.maxMinutesPerFrame);
+    const owed = Math.min(this.clock.minutesOwed(realSeconds), TIME.maxMinutesPerFrame);
+    // Time accumulates and is paid out in whole steps. A frame at 1x owes about
+    // 0.017 minutes, so a step runs about once a second, not once a frame.
+    this.owedMinutes += owed;
+    const stepLen = this.stepLength();
+    const deadline = started + FRAME_SIM_BUDGET_MS;
     let steps = 0;
-    const budgetMs = 9;
-    while (remaining > 0.001) {
-      const dt = Math.min(SIM.stepMinutes * (this.clock.speed > 40 ? 2 : 1), remaining);
-      this.step(dt);
-      remaining -= dt;
-      steps++;
-      if (steps > 6 && performance.now() - started > budgetMs) {
-        // If we cannot keep up, drop the remaining time rather than stalling the
-        // frame: the clock is corrected on the next tick.
-        break;
+    for (;;) {
+      if (!this.stepJob) {
+        if (this.owedMinutes < stepLen - 1e-9) break;
+        this.startStep(stepLen);
+        this.owedMinutes -= stepLen;
       }
-      if (steps > 180) break;
+      // A step's animals are run in slices across frames. Out of time, the rest
+      // waits for the next frame, so one step never stalls one frame.
+      if (!this.runCreatures(deadline)) break;
+      this.finishStep();
+      steps++;
+      if (performance.now() > deadline || steps > 180) break;
     }
+    // Time the budget cannot pay out is dropped rather than building up, so the
+    // clock never runs far ahead of the simulation.
+    this.owedMinutes = Math.min(this.owedMinutes, stepLen * 2);
     this.stats.stepsThisFrame = steps;
     this.stats.simMs = performance.now() - started;
     this.lastSimMs = this.stats.simMs;
-    this.stats.simMinutesPerSecond = this.stats.simMs > 0 ? (target / this.stats.simMs) * 1000 : 0;
-    return target - remaining;
+    this.stats.simMinutesPerSecond = this.stats.simMs > 0 ? (owed / this.stats.simMs) * 1000 : 0;
+    return owed;
   }
 
-  /** Fraction of the way between the last two simulation steps (0..1), for rendering. */
+  private owedMinutes = 0;
+  /** The step whose animals are part-way through being run, if any. */
+  private stepJob: { dt: number; cursor: number } | null = null;
+
+  /**
+   * In-game time for the renderer. The clock only moves in whole steps, so this
+   * adds the time owed but not yet stepped: sky, water and wind animation then
+   * move every frame, not once a second.
+   */
+  get smoothMinutes(): number {
+    return this.clock.minutes + this.owedMinutes;
+  }
+
+  /** Length of one simulation step at the current speed, in in-game minutes. */
+  private stepLength(): number {
+    return SIM.stepMinutes * (this.clock.speed > 40 ? 2 : 1);
+  }
+
+  /** Fraction of the way from the last simulation step to the next (0..1), for rendering. */
   get frameAlpha(): number {
-    const step = SIM.stepMinutes;
-    const frac = ((this.clock.minutes % step) + step) % step;
-    const scaled = frac / step;
-    return this.stats.stepsThisFrame > 1 ? Math.min(1, scaled * this.stats.stepsThisFrame) : scaled;
+    return Math.min(1, Math.max(0, this.owedMinutes / this.stepLength()));
   }
 
   /** Advance simulation by an exact number of minutes (fast-forward, catch-up). */
-  advance(minutes: number, budgetMs = 4000): void {
+  /** Run whole steps until `minutes` have passed or the time budget is spent. Returns the minutes run. */
+  advance(minutes: number, budgetMs = 4000): number {
     const started = performance.now();
     let remaining = minutes;
     while (remaining > 0.001) {
@@ -381,36 +417,88 @@ export class World {
       remaining -= dt;
       if (performance.now() - started > budgetMs) break;
     }
+    return Math.max(0, minutes - Math.max(0, remaining));
   }
 
-  /** A single simulation step of `dt` in-game minutes. */
+  /** A whole simulation step. Fast-forward and the tools use this; the frame loop slices it. */
   step(dt: number): void {
+    // Finish a step that the frame loop has part-way through, so its tail is not lost.
+    if (this.stepJob) {
+      this.runCreatures(Infinity);
+      this.finishStep();
+    }
+    // Fast-forward runs whole steps back to back: finish the water update first.
+    while (this.hydrology.busy) this.hydrology.pump();
+    this.startStep(dt);
+    this.runCreatures(Infinity);
+    this.finishStep();
+  }
+
+  /** The environment part of a step, then the start of the animal loop (run by runCreatures). */
+  private startStep(dt: number): void {
     try {
       this.clock.advanceMinutes(dt);
       this.climate.beginStep(dt);
       this.climate.update(dt);
       // The heavier field simulators run at their own cadence. Plants and soil
       // do not need two-minute resolution; water does, because it flows.
-      if (this.due('hydro', dt, 3)) this.hydrology.update(3);
-      if (this.due('soil', dt, 6)) this.soil.update(6);
-      if (this.due('veg', dt, 6)) this.vegetation.update(6);
-      if (this.due('forest', dt, 18)) this.forest.update(18);
-      this.fire.update(dt, this.terrain.soilMoisture.data);
-      if (this.due('agg', dt, 6)) this.aggregates.update(6);
+      if (this.due('hydro', dt, 3)) this.hydrology.begin(3);
+      this.timed('hydro', () => this.hydrology.pump());
+      if (this.due('soil', dt, 6)) this.timed('soil', () => this.soil.update(6));
+      if (this.due('veg', dt, 6)) this.timed('veg', () => this.vegetation.update(6));
+      if (this.due('forest', dt, 18)) this.timed('forest', () => this.forest.update(18));
+      this.timed('fire', () => this.fire.update(dt, this.terrain.soilMoisture.data));
+      if (this.due('agg', dt, 6)) this.timed('agg', () => this.aggregates.update(6));
       this.updateCreatureGrid();
+      this.stepJob = { dt, cursor: 0 };
+    } catch (err) {
+      this.reportError('world:step', err);
+      this.stepJob = { dt, cursor: this.creatures.capacity };
+    }
+  }
 
-      // Individual animals think and move.
-      const c = this.creatures;
-      for (let i = 0; i < c.capacity; i++) {
-        if (c.alive[i]) simulateCreature(this, i, dt);
+  /**
+   * Run the animals of the current step, from the cursor, until the deadline.
+   * Returns true when every animal has been run. The loop checks the clock every
+   * 32 animals, so each call makes progress even with a deadline already past.
+   */
+  private runCreatures(deadlineMs: number): boolean {
+    const job = this.stepJob;
+    if (!job) return true;
+    const c = this.creatures;
+    // Water work is sliced over the animal loop, so it advances even with no animals.
+    this.timed('hydro', () => this.hydrology.pump());
+    try {
+      let n = 0;
+      for (; job.cursor < c.capacity; job.cursor++) {
+        if (c.alive[job.cursor]) simulateCreature(this, job.cursor, job.dt);
+        if ((++n & 31) === 0) this.timed('hydro', () => this.hydrology.pump());
+        if ((n & 31) === 0 && performance.now() > deadlineMs) {
+          job.cursor++;
+          return false;
+        }
       }
+    } catch (err) {
+      this.reportError('world:creatures', err);
+    }
+    return true;
+  }
+
+  /** The end of a step: population turnover, cadence events, and the daily rollover. */
+  private finishStep(): void {
+    const job = this.stepJob;
+    this.stepJob = null;
+    if (!job) return;
+    const dt = job.dt;
+    const c = this.creatures;
+    try {
       c.tick(dt, this.clock.day);
       c.ageTrails(dt);
 
       // Thirty minutes of real simulation time, expressed in days: the SIR step
       // must match the clock, or an epidemic burns through a generation a minute.
-      if (this.due('disease', dt, 30)) this.disease.update(c, 30 / TIME.minutesPerDay, this.clock.day);
-      if (this.due('social', dt, 15)) this.social.update(this, 15);
+      if (this.due('disease', dt, 30)) this.timed('disease', () => this.disease.update(c, 30 / TIME.minutesPerDay, this.clock.day));
+      if (this.due('social', dt, 15)) this.timed('social', () => this.social.update(this, 15));
       if (this.due('carcass', dt, 20)) {
         const leach = this.carcasses.update(20 / TIME.minutesPerDay, this.climate);
         for (const l of leach) {
@@ -420,8 +508,8 @@ export class World {
         }
       }
       if (this.due('canopy', dt, 30)) this.forest.refreshCanopy();
-      if (this.due('census', dt, 60)) this.census.update(this, true);
-      if (this.due('events', dt, 60)) this.detectNotableEvents();
+      if (this.due('census', dt, 60)) this.timed('census', () => this.census.update(this, true));
+      if (this.due('events', dt, 60)) this.timed('events', () => this.detectNotableEvents());
       if (this.due('fire-spont', dt, 90)) this.fire.spontaneous(90);
       if (this.due('day', dt, 1)) this.onMinuteTick();
 
@@ -449,6 +537,26 @@ export class World {
     c.grid.clear();
     for (let i = 0; i < c.capacity; i++) {
       if (c.alive[i]) c.grid.insert(i, c.x[i], c.y[i]);
+    }
+  }
+
+  /**
+   * Time one pass. Max and average are kept so a frame hitch can be traced to
+   * the pass that caused it. Open the app with ?passlog to read them.
+   */
+  private passStats: Record<string, { max: number; sum: number; n: number }> = {};
+  private timed(name: string, fn: () => void): void {
+    const t = performance.now();
+    fn();
+    const ms = performance.now() - t;
+    const st = (this.passStats[name] ??= { max: 0, sum: 0, n: 0 });
+    st.max = Math.max(st.max, ms);
+    st.sum += ms;
+    st.n++;
+    if (PASS_LOG) {
+      (globalThis as unknown as { __passMs?: unknown }).__passMs = Object.fromEntries(
+        Object.entries(this.passStats).map(([k, v]) => [k, { max: +v.max.toFixed(1), avg: +(v.sum / v.n).toFixed(2), n: v.n }]),
+      );
     }
   }
 
@@ -1578,11 +1686,38 @@ export class World {
     return best;
   }
 
-  /** Nearest dense cover: shrubs or closed canopy. */
+  /**
+   * Nearest dense cover: shrubs or closed canopy. Cover changes over seasons,
+   * not seconds, so the search is cached per 4×4-cell block and cleared each
+   * simulated day. The distance is always measured from the animal's own
+   * position, so only the choice of cover is shared between nearby animals.
+   */
+  private coverCache = new Map<number, { x: number; y: number; score: number } | null>();
+  private coverCacheDay = -1;
+
   findCover(x: number, y: number, range = 180): { x: number; y: number; distance: number } | null {
     const t = this.terrain;
+    if (this.clock.day !== this.coverCacheDay) {
+      this.coverCache.clear();
+      this.coverCacheDay = this.clock.day;
+    }
     const cx = clamp(Math.round(t.worldToCellX(x)), 0, t.last);
     const cy = clamp(Math.round(t.worldToCellY(y)), 0, t.last);
+    const bx = cx >> 2;
+    const by = cy >> 2;
+    const key = bx * 65536 + by;
+    let best: { x: number; y: number; score: number } | null;
+    if (this.coverCache.has(key)) {
+      best = this.coverCache.get(key) ?? null;
+    } else {
+      best = this.searchCover(bx * 4 + 2, by * 4 + 2, range);
+      this.coverCache.set(key, best);
+    }
+    return best ? { x: best.x, y: best.y, distance: Math.hypot(best.x - x, best.y - y) } : null;
+  }
+
+  private searchCover(cx: number, cy: number, range: number): { x: number; y: number; score: number } | null {
+    const t = this.terrain;
     const step = Math.max(2, Math.round(range / t.cellUnits / 8));
     let best: { x: number; y: number; score: number } | null = null;
     for (let ring = 1; ring <= 10; ring++) {
@@ -1596,12 +1731,12 @@ export class World {
         const wx = t.cellToWorldX(sx);
         const wy = t.cellToWorldY(sy);
         const cover = clamp01(t.canopy.data[i] * 0.8 + this.vegetation.coverAt(wx, wy) * 0.6);
-        const d = Math.hypot(wx - x, wy - y);
+        const d = Math.hypot(wx - t.cellToWorldX(cx), wy - t.cellToWorldY(cy));
         const score = cover * 1.4 - d / Math.max(1, range);
         if (cover > 0.35 && (!best || score > best.score)) best = { x: wx, y: wy, score };
       }
     }
-    return best ? { x: best.x, y: best.y, distance: Math.hypot(best.x - x, best.y - y) } : null;
+    return best;
   }
 
   /** Nearest shade (a cool spot under a canopy). */

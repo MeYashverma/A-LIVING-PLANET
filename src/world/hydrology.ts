@@ -49,13 +49,17 @@ export class Hydrology {
    */
   waterReach(x: number, y: number): { x: number; y: number; distance: number } | null {
     const t = this.terrain;
+    // Never rebuild here: this runs inside the animal loop. A dirty map is
+    // rebuilt in slices (pumpReach) and the previous map answers until then.
     if (this.reachDirty) {
       this.reachDirty = false;
-      this.buildReachMap();
+      if (!this.reachGen) this.reachGen = this.reachSteps();
     }
     const cx = clamp(Math.round(t.worldToCellX(x)), 0, t.last);
     const cy = clamp(Math.round(t.worldToCellY(y)), 0, t.last);
     const i = cy * t.size + cx;
+    // Before the first build completes the arrays are empty: no water known yet.
+    if (i >= this.reachDist.length) return null;
     const d = this.reachDist[i];
     if (d < 0 || d > this.reachMax) return null;
     return { x: t.cellToWorldX(this.reachX[i]), y: t.cellToWorldY(this.reachY[i]), distance: d };
@@ -86,23 +90,32 @@ export class Hydrology {
    * changes, and it answers "where is water?" in constant time — thousands of
    * animals asking every few minutes would otherwise dominate the frame.
    */
-  private buildReachMap(): void {
+  private reachGen: Generator<void, void, void> | null = null;
+
+  /**
+   * Advance the water-reach build by one slice. The build is a full-grid flood
+   * fill, so it runs in chunks spread over the animal loop instead of in one
+   * frame. The new arrays replace the old only when the fill is complete, so
+   * readers never see a half-built map.
+   */
+  pumpReach(): void {
+    if (!this.reachGen) return;
+    if (this.reachGen.next().done) this.reachGen = null;
+  }
+
+  private *reachSteps(): Generator<void, void, void> {
     const t = this.terrain;
     const n = t.size;
-    if (this.reachDist.length !== n * n) {
-      this.reachDist = new Float32Array(n * n);
-      this.reachX = new Int32Array(n * n);
-      this.reachY = new Int32Array(n * n);
-      this.reachQueue = new Int32Array(n * n);
-    }
+    const dist = new Float32Array(n * n);
+    const rx = new Int32Array(n * n);
+    const ry = new Int32Array(n * n);
+    const queue = new Int32Array(n * n);
     const depth = t.waterDepth.data;
     const h = t.height.data;
     const sea = t.params.seaLevel;
-    const dist = this.reachDist;
-    const rx = this.reachX;
-    const ry = this.reachY;
-    const queue = this.reachQueue;
     const step = t.cellUnits;
+    const CHUNK = 8000;
+    let work = 0;
     // Seed every drinkable cell, then breadth-first over the 8-neighbourhood.
     // A FIFO sweep with two edge lengths is not exact Euclidean distance, but
     // it is monotone, complete and O(cells) — and it never leaves a reachable
@@ -122,26 +135,33 @@ export class Hydrology {
         rx[i] = -1;
         ry[i] = -1;
       }
+      if (++work % CHUNK === 0) yield;
     }
     const maxDist = this.reachMax;
     while (head < tail) {
       const i = queue[head++];
       const d = dist[i];
-      if (d >= maxDist) continue;
-      const cx = i % n;
-      const cy = (i / n) | 0;
-      for (let dir = 0; dir < 8; dir++) {
-        const nx = cx + REACH_DX[dir];
-        const ny = cy + REACH_DY[dir];
-        if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
-        const j = ny * n + nx;
-        if (dist[j] >= 0) continue;
-        dist[j] = d + (dir < 4 ? step : step * 1.35);
-        rx[j] = rx[i];
-        ry[j] = ry[i];
-        queue[tail++] = j;
+      if (d < maxDist) {
+        const cx = i % n;
+        const cy = (i / n) | 0;
+        for (let dir = 0; dir < 8; dir++) {
+          const nx = cx + REACH_DX[dir];
+          const ny = cy + REACH_DY[dir];
+          if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
+          const j = ny * n + nx;
+          if (dist[j] >= 0) continue;
+          dist[j] = d + (dir < 4 ? step : step * 1.35);
+          rx[j] = rx[i];
+          ry[j] = ry[i];
+          queue[tail++] = j;
+        }
       }
+      if (++work % CHUNK === 0) yield;
     }
+    this.reachDist = dist;
+    this.reachX = rx;
+    this.reachY = ry;
+    this.reachQueue = queue;
   }
 
   /** Rebuild the active water set. Cheap enough to run every few minutes. */
@@ -161,7 +181,36 @@ export class Hydrology {
     this.wetCount = count;
   }
 
+  private job: Generator<void, void, void> | null = null;
+
+  /** True while a water update is part-way through its slices. */
+  get busy(): boolean {
+    return this.job !== null;
+  }
+
+  /** Start a water update unless one is already running. Run it with pump(). */
+  begin(dtMinutes: number): void {
+    if (!this.job) this.job = this.updateSteps(dtMinutes);
+  }
+
+  /** Run one slice of the water update (a few grid rows or one section). */
+  pump(): void {
+    if (this.job && this.job.next().done) this.job = null;
+    this.pumpReach();
+  }
+
+  /** Whole update in one call, for callers outside the frame loop. */
   update(dtMinutes: number): void {
+    this.begin(dtMinutes);
+    while (this.job) this.pump();
+  }
+
+  /**
+   * The water update as resumable slices: a few grid rows of precipitation at a
+   * time, then one yield per remaining section, so no single frame pays for the
+   * whole grid.
+   */
+  private *updateSteps(dtMinutes: number): Generator<void, void, void> {
     const hours = dtMinutes / 60;
     const t = this.terrain;
     const n = t.size;
@@ -178,6 +227,7 @@ export class Hydrology {
     /* --- 1. precipitation, snow, infiltration, evaporation --- */
     let snowTotal = 0;
     for (let cy = 0; cy < n; cy++) {
+      if (cy % 8 === 7) yield;
       for (let cx = 0; cx < n; cx++) {
         const i = cy * n + cx;
         const temp = this.climate.temperatureAtCellFast(cx, cy);
@@ -229,15 +279,19 @@ export class Hydrology {
       }
     }
     this.snowVolume = snowTotal;
+    yield;
 
     // Sea stays put (treated as an infinite reservoir), and glaciers hold their ice.
     this.seaFill();
+    yield;
 
     /* --- 2. lateral flow over the wet set --- */
     this.flow(dtMinutes);
+    yield;
 
     /* --- 3. rivers: discharge-driven depth --- */
     this.updateRivers(hours);
+    yield;
 
     // Track land water volume for reports.
     let vol = 0;
@@ -248,6 +302,7 @@ export class Hydrology {
     this.landWaterVolume = vol;
     this.wetnessIndex = lerp(this.wetnessIndex, clamp01(vol / (t.size * t.size * 0.06)), 0.1);
 
+    yield;
     // Refresh the active set periodically so newly filled hollows join in.
     if (Math.random() < 0.25) this.refreshWetSet(false);
 
@@ -255,7 +310,7 @@ export class Hydrology {
     if (this.reachDirty || this.reachAge > (anyRain ? 180 : 1200)) {
       this.reachAge = 0;
       this.reachDirty = false;
-      this.buildReachMap();
+      if (!this.reachGen) this.reachGen = this.reachSteps();
     }
   }
 
@@ -410,6 +465,9 @@ export class Hydrology {
   }
 
   load(d: Record<string, any>): void {
+    // A slice in progress holds the old arrays: drop it before loading.
+    this.job = null;
+    this.reachGen = null;
     if (d.waterDepth) this.terrain.waterDepth.restore(d.waterDepth);
     if (d.snow) this.terrain.snow.restore(d.snow);
     if (d.soilMoisture) this.terrain.soilMoisture.restore(d.soilMoisture);

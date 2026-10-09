@@ -208,7 +208,7 @@ export class Sky {
     u.uCloudCover.value = clamp01(cloudMean * 1.1 + (world.climate.state === 'storm' ? 0.35 : 0));
     u.uStorm.value = clamp01(world.fire.smoke * 0.4 + (world.climate.state === 'storm' ? world.climate.intensity : 0));
     u.uRain.value = clamp01(world.climate.rainIntensity.stats().mean / 1.5);
-    u.uTime.value = clock.minutes * 0.02;
+    u.uTime.value = world.smoothMinutes * 0.02;
     (u.uWind.value as THREE.Vector2).set(Math.cos(world.climate.windDirection) * world.climate.windSpeed, Math.sin(world.climate.windDirection) * world.climate.windSpeed);
 
     // Sky colours: cool at night, warm at dawn, hazy in fog.

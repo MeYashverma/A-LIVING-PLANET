@@ -272,15 +272,52 @@ export class SimHost {
     this.emitChange();
   }
 
-  /** Fast-forward by an exact span of simulated time. */
+  /** Minutes still owed by a jump in progress (0 when idle). */
+  private jumpLeft = 0;
+  private jumpKind = '';
+  private jumpTotal = 0;
+  private jumpProgressAt = 0;
+
+  get jumping(): boolean {
+    return this.jumpLeft > 0;
+  }
+
+  /**
+   * Fast-forward by an exact span of simulated time. The span is run in short
+   * slices from the frame loop (see frame), so the whole year is simulated and
+   * the view stays responsive; a single call used to stop after a fixed budget
+   * and silently advance only a few days.
+   */
   jump(kind: 'hour' | 'day' | 'week' | 'month' | 'year'): void {
-    const minutes =
+    if (this.jumpLeft > 0) {
+      this.toast('Already advancing. Wait for it to finish.');
+      return;
+    }
+    this.jumpTotal =
       kind === 'hour' ? 60 : kind === 'day' ? TIME.minutesPerDay : kind === 'week' ? TIME.minutesPerDay * 7 : kind === 'month' ? TIME.minutesPerDay * 30 : TIME.minutesPerDay * TIME.daysPerYear;
-    this.toast(`Advancing ${kind}...`);
-    this.world.advance(minutes, 2500);
+    this.jumpLeft = this.jumpTotal;
+    this.jumpKind = kind;
+    this.jumpProgressAt = 0;
+    this.toast(`Advancing ${kind}…`);
+  }
+
+  /** One slice of a jump: about 30 ms of simulation per frame. */
+  private runJump(now: number): void {
+    this.jumpLeft -= this.world.advance(this.jumpLeft, 30);
+    if (this.jumpLeft > 0.001) {
+      // A progress line about once a second, so a long jump never looks frozen.
+      if (now - this.jumpProgressAt > 1000) {
+        this.jumpProgressAt = now;
+        const pct = Math.round((100 * (this.jumpTotal - this.jumpLeft)) / this.jumpTotal);
+        this.toast(`Advancing ${this.jumpKind}… ${pct}%`);
+      }
+      return;
+    }
+    this.jumpLeft = 0;
     this.world.census.update(this.world, true);
     this.world.history.sample(this.world);
     this.dirty = true;
+    this.toast(`Advanced one ${this.jumpKind}. Day ${this.world.clock.day}.`, 'discovery');
     this.emitChange();
   }
 
@@ -289,8 +326,9 @@ export class SimHost {
   /* ------------------------------------------------------------------ */
 
   frame(realSeconds: number, now: number): void {
-    const minutes = this.world.update(realSeconds);
-    void minutes;
+    // A jump owns the clock until it finishes: normal time does not run alongside it.
+    if (this.jumpLeft > 0) this.runJump(now);
+    else this.world.update(realSeconds);
     // Autosave: frequent enough that a reload never costs much, cheap because
     // serialising a world is a few milliseconds.
     if (this.settings.autosave && this.recordId && this.dirty && now - this.lastAutosave > 60_000) {

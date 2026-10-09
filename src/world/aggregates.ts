@@ -118,7 +118,7 @@ export class Aggregates {
 
   private rng: Random;
   private slice = 0;
-  private slices = 4;
+  private slices = 8;
 
   constructor(terrain: Terrain, climate: Climate, vegetation: Vegetation, seed: string) {
     this.terrain = terrain;
@@ -148,6 +148,32 @@ export class Aggregates {
 
   private patchToTerrain(p: number): number {
     return p * this.patchCells;
+  }
+
+  private capStamp = -1;
+  private capCache = new Map<string, Float32Array>();
+
+  /**
+   * Carrying capacity, cached for one simulated hour. Capacity follows climate
+   * and light, which change over hours and seasons, so an hourly cache keeps the
+   * day–night response while skipping the per-patch environment sampling.
+   */
+  private capacityCached(s: AggregateSpecies, pcx: number, pcy: number): number {
+    const clock = this.climate.clock;
+    const stamp = clock.day * 24 + Math.floor(clock.hour);
+    if (stamp !== this.capStamp) {
+      this.capCache.clear();
+      this.capStamp = stamp;
+    }
+    let arr = this.capCache.get(s.key);
+    if (!arr) {
+      arr = new Float32Array((this.biomass.get(s.key) as DensityGrid).counts.length).fill(-1);
+      this.capCache.set(s.key, arr);
+    }
+    const n = Math.round(Math.sqrt(arr.length));
+    const i = pcy * n + pcx;
+    if (arr[i] < 0) arr[i] = this.capacityAt(s, pcx, pcy);
+    return arr[i];
   }
 
   /** Carrying capacity of a patch for a species, from real environment state. */
@@ -213,7 +239,11 @@ export class Aggregates {
    * simulated hour by the world.
    */
   update(dtMinutes: number): void {
-    const hours = dtMinutes / 60;
+    // Each call covers one band of 1/slices of the grid, so each cell is visited
+    // once per `slices` calls. Scaling the time step by `slices` keeps every
+    // cell's growth and decline the same per sweep, while each call does half
+    // the work it did at 4 slices.
+    const hours = (dtMinutes / 60) * this.slices;
     const t = this.terrain;
     const n = this.size;
     const bandStart = Math.floor((this.slice * n) / this.slices);
@@ -233,7 +263,7 @@ export class Aggregates {
         for (let pcx = 0; pcx < n; pcx++) {
           const i = pcy * n + pcx;
           let val = b[i];
-          const K = this.capacityAt(s, pcx, pcy);
+          const K = this.capacityCached(s, pcx, pcy);
           // Dispersal: a small flux between neighbours keeps patches connected.
           let flux = 0;
           if (pcx > 0) flux += b[i - 1] - val;

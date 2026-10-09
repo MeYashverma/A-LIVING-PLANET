@@ -49,6 +49,112 @@ function makeStreakTexture(w = 8, h = 64): THREE.DataTexture {
   return tex;
 }
 
+/** A leaf silhouette with a midrib and a faint vein pattern, generated at runtime. */
+function makeLeafTexture(size = 64): THREE.DataTexture {
+  const data = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      // u across the leaf, v along it, both in [-1, 1].
+      const u = (x / (size - 1)) * 2 - 1;
+      const v = (y / (size - 1)) * 2 - 1;
+      // Half-width is widest a little below the middle and pointed at both ends.
+      const halfWidth = 0.46 * Math.pow(Math.max(0, 1 - v * v), 0.85) * (1 - 0.25 * v);
+      const edge = clamp01((halfWidth - Math.abs(u)) * size * 0.35 + 0.5);
+      const midrib = Math.exp(-Math.pow(u / 0.035, 2));
+      const veins = 0.5 + 0.5 * Math.cos((Math.abs(u) * 9 - v * 3) * Math.PI);
+      const shade = 0.82 + 0.18 * veins - 0.25 * midrib;
+      const i = (y * size + x) * 4;
+      data[i] = Math.round(255 * shade);
+      data[i + 1] = Math.round(255 * shade);
+      data[i + 2] = Math.round(255 * shade);
+      data[i + 3] = Math.round(edge * 255);
+    }
+  }
+  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  tex.needsUpdate = true;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  return tex;
+}
+
+/** A six-armed snow crystal with side branches, generated at runtime. */
+function makeSnowTexture(size = 64): THREE.DataTexture {
+  const data = new Uint8Array(size * size * 4);
+  const c = (size - 1) / 2;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = (x - c) / c;
+      const dy = (y - c) / c;
+      const r = Math.hypot(dx, dy);
+      const theta = Math.atan2(dy, dx);
+      let a = 0;
+      if (r < 0.95) {
+        for (let k = 0; k < 6; k++) {
+          const arm = theta - (k * Math.PI) / 3;
+          // Distance from the arm's axis, in the perpendicular direction.
+          const across = Math.abs(r * Math.sin(arm));
+          const along = r * Math.cos(arm);
+          if (along > 0) {
+            const width = 0.07 * (1 - r * 0.5);
+            a = Math.max(a, clamp01((width - across) * size * 0.9 + 0.5));
+          }
+          // Side branches at two points along each arm.
+          for (const t of [0.45, 0.7]) {
+            const bx = t * Math.cos((k * Math.PI) / 3);
+            const by = t * Math.sin((k * Math.PI) / 3);
+            for (const sign of [-1, 1]) {
+              const ang = (k * Math.PI) / 3 + sign * (Math.PI / 3);
+              const px = dx - bx;
+              const py = dy - by;
+              const along2 = px * Math.cos(ang) + py * Math.sin(ang);
+              const across2 = Math.abs(-px * Math.sin(ang) + py * Math.cos(ang));
+              if (along2 > 0 && along2 < 0.22) a = Math.max(a, clamp01((0.045 - across2) * size * 0.9 + 0.5));
+            }
+          }
+        }
+      }
+      a = Math.max(a, clamp01((0.12 - r) * size * 0.6 + 0.5));
+      const i = (y * size + x) * 4;
+      data[i] = 255;
+      data[i + 1] = 255;
+      data[i + 2] = 255;
+      data[i + 3] = Math.round(clamp01(a) * 255);
+    }
+  }
+  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  tex.needsUpdate = true;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  return tex;
+}
+
+/** An irregular, mottled dust grain: a soft blob with hashed variation. */
+function makeDustTexture(size = 32): THREE.DataTexture {
+  const data = new Uint8Array(size * size * 4);
+  const c = (size - 1) / 2;
+  const hash = (x: number, y: number) => {
+    const h = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return h - Math.floor(h);
+  };
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const d = Math.hypot(x - c, y - c) / c;
+      const edge = clamp01(1 - d);
+      const grain = 0.55 + 0.45 * hash(Math.floor(x / 2), Math.floor(y / 2));
+      const i = (y * size + x) * 4;
+      data[i] = 255;
+      data[i + 1] = 255;
+      data[i + 2] = 255;
+      data[i + 3] = Math.round(edge * edge * grain * 255);
+    }
+  }
+  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  tex.needsUpdate = true;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  return tex;
+}
+
 interface ParticleSet {
   points: THREE.Points;
   count: number;
@@ -58,6 +164,8 @@ interface ParticleSet {
   life: Float32Array;
   size: Float32Array;
   opacity: Float32Array;
+  angle: Float32Array;
+  spin: Float32Array;
   cursor: number;
   uniforms: Record<string, THREE.IUniform>;
 }
@@ -84,11 +192,11 @@ export class Effects {
     const preset = QUALITY_PRESETS[quality];
     const scale = preset.particles;
     this.rain = this.makeParticles(Math.round(4200 * scale), makeStreakTexture(), 0.7);
-    this.snow = this.makeParticles(Math.round(2200 * scale), makePuffTexture(32, 0.2), 0.5);
-    this.leaves = this.makeParticles(Math.round(500 * scale), makePuffTexture(32, 0.3), 0.5);
+    this.snow = this.makeParticles(Math.round(2200 * scale), makeSnowTexture(64), 0.5);
+    this.leaves = this.makeParticles(Math.round(500 * scale), makeLeafTexture(64), 0.5);
     this.smoke = this.makeParticles(Math.round(900 * scale), makePuffTexture(64, 0.1), 1.6);
     this.insects = this.makeParticles(Math.round(700 * scale), makePuffTexture(16, 0.25), 0.3);
-    this.dust = this.makeParticles(Math.round(600 * scale), makePuffTexture(24, 0.2), 0.5);
+    this.dust = this.makeParticles(Math.round(600 * scale), makeDustTexture(32), 0.5);
     this.group.add(this.rain.points, this.snow.points, this.leaves.points, this.smoke.points, this.insects.points, this.dust.points);
 
     // Fire: billboarded quads, additive, animated in the vertex shader.
@@ -159,6 +267,8 @@ export class Effects {
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('aOpacity', new THREE.BufferAttribute(opacity, 1).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1).setUsage(THREE.DynamicDrawUsage));
+    const angle = new Float32Array(capacity);
+    geo.setAttribute('aAngle', new THREE.BufferAttribute(angle, 1).setUsage(THREE.DynamicDrawUsage));
     const uniforms = {
       uTex: { value: texture },
       uScale: { value: sizeScale },
@@ -173,11 +283,14 @@ export class Effects {
       vertexShader: /* glsl */ `
         attribute float aOpacity;
         attribute float aSize;
+        attribute float aAngle;
         uniform float uScale;
         uniform float uPixelRatio;
         varying float vOpacity;
+        varying float vAngle;
         void main() {
           vOpacity = aOpacity;
+          vAngle = aAngle;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
           gl_Position = projectionMatrix * mv;
           gl_PointSize = aSize * uScale * uPixelRatio * (300.0 / max(1.0, -mv.z));
@@ -188,8 +301,13 @@ export class Effects {
         uniform sampler2D uTex;
         uniform vec3 uColor;
         varying float vOpacity;
+        varying float vAngle;
         void main() {
-          vec4 tex = texture2D(uTex, gl_PointCoord);
+          // Turn the sprite about its centre, so leaves tumble and flakes spin.
+          vec2 p = gl_PointCoord - 0.5;
+          float cs = cos(vAngle);
+          float sn = sin(vAngle);
+          vec4 tex = texture2D(uTex, vec2(cs * p.x - sn * p.y, sn * p.x + cs * p.y) + 0.5);
           float a = tex.a * vOpacity;
           if (a < 0.004) discard;
           gl_FragColor = vec4(uColor * tex.rgb, a);
@@ -209,6 +327,8 @@ export class Effects {
       life: new Float32Array(capacity),
       size,
       opacity,
+      angle,
+      spin: new Float32Array(capacity),
       cursor: 0,
       uniforms,
     };
@@ -232,6 +352,10 @@ export class Effects {
     set.life[i] = life;
     set.size[i] = size;
     set.opacity[i] = opacity;
+    set.angle[i] = this.rand() * TAU;
+    // Leaves tumble fastest, snow turns slowly, dust barely turns.
+    const spinRange = set === this.leaves ? 3.2 : set === this.snow ? 1.2 : set === this.dust ? 0.4 : 0;
+    set.spin[i] = (this.rand() - 0.5) * spinRange;
   }
 
   /** Advance all effects. `dt` is real seconds. */
@@ -415,6 +539,7 @@ export class Effects {
         continue;
       }
       life[i] -= dt;
+      set.angle[i] += set.spin[i] * dt;
       const i3 = i * 3;
       const drag = set === this.smoke ? 0.6 : 0.2;
       vel[i3] += (windX * drag - vel[i3] * 0.4) * dt;
@@ -446,6 +571,7 @@ export class Effects {
     (set.points.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
     (set.points.geometry.getAttribute('aOpacity') as THREE.BufferAttribute).needsUpdate = true;
     (set.points.geometry.getAttribute('aSize') as THREE.BufferAttribute).needsUpdate = true;
+    (set.points.geometry.getAttribute('aAngle') as THREE.BufferAttribute).needsUpdate = true;
     set.points.geometry.setDrawRange(0, set.capacity);
     void visible;
   }

@@ -24,6 +24,12 @@
   --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Roboto Mono', Menlo, monospace;
   --radius: 3px;
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --panel-solid: #161b20;
+  /* Measured from the real bars at runtime (see hud.ts), not magic numbers. */
+  --topbar-h: 44px;
+  --bottombar-h: 96px;
+  --col-top: calc(var(--topbar-h) + 18px);
+  --col-max-h: calc(100vh - var(--topbar-h) - var(--bottombar-h) - 34px);
 }
 
 * {
@@ -80,65 +86,29 @@ textarea {
   pointer-events: auto;
 }
 
-/* ------------------------------------------------------------------ */
-/* Chrome                                                             */
-/* ------------------------------------------------------------------ */
-
-.bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: linear-gradient(180deg, rgba(21, 26, 31, 0.97), rgba(17, 21, 25, 0.97));
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 6px 10px;
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(2px);
-}
-
-#topbar {
-  left: 10px;
-  right: 10px;
-  top: 10px;
-}
-
-#bottombar {
-  left: 10px;
-  right: 10px;
-  bottom: 10px;
-  flex-wrap: wrap;
-  row-gap: 8px;
-}
-
 #leftcol {
   left: 10px;
-  top: 66px;
+  top: var(--col-top);
   width: 296px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: calc(100vh - 150px);
+  /* Stop above the minimap and the scale bar, and scroll rather than clip. */
+  max-height: calc(100vh - var(--topbar-h) - 232px);
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 #rightcol {
   right: 10px;
-  top: 66px;
+  top: var(--col-top);
   width: 372px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: calc(100vh - 150px);
-}
-
-#toasts {
-  right: 10px;
-  top: 66px;
-  width: 372px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  z-index: 30;
-  pointer-events: none !important;
+  max-height: var(--col-max-h);
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .panel {
@@ -414,7 +384,7 @@ input[type='checkbox'] {
   white-space: nowrap;
 }
 
-.bar {
+.meter {
   position: relative;
   height: 4px;
   background: #10151a;
@@ -422,22 +392,22 @@ input[type='checkbox'] {
   overflow: hidden;
 }
 
-.bar > i {
+.meter > i {
   position: absolute;
   inset: 0 auto 0 0;
   background: var(--accent-dim);
   display: block;
 }
 
-.bar > i.good {
+.meter > i.good {
   background: var(--good);
 }
 
-.bar > i.bad {
+.meter > i.bad {
   background: var(--bad);
 }
 
-.bar > i.water {
+.meter > i.water {
   background: var(--water);
 }
 
@@ -673,128 +643,6 @@ canvas.chart {
   margin-right: 4px;
 }
 
-/* ------------------------------------------------------------------ */
-/* Toasts, captions, modals                                            */
-/* ------------------------------------------------------------------ */
-
-.toast {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-left: 2px solid var(--accent);
-  border-radius: var(--radius);
-  padding: 6px 9px;
-  box-shadow: var(--shadow);
-  font-size: 0.9em;
-  pointer-events: none;
-  animation: toast-in 0.18s ease-out;
-}
-
-.toast.discovery {
-  border-left-color: var(--good);
-}
-
-.toast.extinct {
-  border-left-color: var(--bad);
-}
-
-.toast .x {
-  color: var(--text-dim);
-}
-
-@keyframes toast-in {
-  from {
-    opacity: 0;
-    transform: translateX(10px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-#captions {
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: 86px;
-  width: min(720px, 68vw);
-  text-align: center;
-  z-index: 20;
-}
-
-.caption {
-  display: inline-block;
-  background: rgba(12, 15, 18, 0.72);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius);
-  padding: 8px 14px;
-  font-size: 1.02em;
-  letter-spacing: 0.01em;
-  color: #efe9dc;
-  animation: toast-in 0.2s ease-out;
-}
-
-.caption .who {
-  display: block;
-  color: var(--accent);
-  font-size: 0.74em;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  margin-bottom: 3px;
-}
-
-#modal-layer {
-  position: absolute;
-  inset: 0;
-  background: rgba(6, 8, 10, 0.72);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 60;
-  pointer-events: auto;
-}
-
-.modal {
-  width: min(760px, 92vw);
-  max-height: 86vh;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  box-shadow: var(--shadow);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.modal header {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--line-soft);
-  background: var(--panel-2);
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-
-.modal header h1 {
-  margin: 0;
-  font-size: 1.1em;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.modal .body {
-  padding: 14px 16px;
-  overflow-y: auto;
-}
-
-.modal footer {
-  padding: 10px 16px;
-  border-top: 1px solid var(--line-soft);
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  background: var(--panel-2);
-}
-
 .field {
   display: grid;
   grid-template-columns: 150px 1fr;
@@ -822,31 +670,6 @@ canvas.chart {
 
 .world-card.on {
   border-color: var(--accent-dim);
-}
-
-/* ------------------------------------------------------------------ */
-/* Documentary mode                                                    */
-/* ------------------------------------------------------------------ */
-
-body.documentary #leftcol,
-body.documentary #rightcol,
-body.documentary #bottombar .tools,
-body.documentary #bottombar .hint,
-body.documentary #toasts {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.6s ease;
-}
-
-body.documentary #topbar,
-body.documentary #bottombar {
-  opacity: 0.22;
-  transition: opacity 0.6s ease;
-}
-
-body.documentary #topbar:hover,
-body.documentary #bottombar:hover {
-  opacity: 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -906,8 +729,7 @@ body.high-contrast {
 
   #rightcol {
     width: min(360px, 46vw);
-  }
-}
+  }}
 
 @media (max-width: 720px) {
   #rightcol {
@@ -915,17 +737,31 @@ body.high-contrast {
     right: 10px;
     width: auto;
     top: auto;
-    bottom: 62px;
+    bottom: calc(var(--bottombar-h) + 8px);
     max-height: 46vh;
-  }
+  }}
 
-  #toasts {
-    left: 10px;
-    width: auto;
-  }
+@media (max-width: 720px) {
+  #minimap {
+    display: none;
+  }}
 
-  #captions {
-    width: 92vw;
-    bottom: 46vh;
+/* Documentary mode hides the side panels; the HUD dims itself in hud.css. */
+body.documentary #leftcol,
+body.documentary #rightcol {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.6s ease;
+}
+
+/* Users who ask for less motion get instant state changes, not transitions. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

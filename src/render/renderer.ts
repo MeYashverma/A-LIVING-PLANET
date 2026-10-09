@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { createGradePass } from './grade';
 import { clamp, clamp01, lerp } from '../core/math';
 import { QUALITY_PRESETS, RENDER } from '../core/config';
 import type { Settings } from '../core/events';
@@ -100,7 +101,7 @@ export class WorldRenderer {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.02;
     this.renderer.shadowMap.enabled = preset.shadow > 0;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.domElement.style.display = 'block';
     this.renderer.domElement.style.width = '100%';
@@ -119,6 +120,7 @@ export class WorldRenderer {
       triplanar: this.quality === 'high' || this.quality === 'ultra',
     });
     this.scene.add(this.terrainMesh.group);
+    this.terrainMesh.attachRenderer(this.renderer);
     this.groundCover = new GroundCover(world, this.quality, textures);
     this.scene.add(this.groundCover.group);
     this.props = new Props(world, this.quality, textures);
@@ -161,6 +163,8 @@ export class WorldRenderer {
     }
     const output = new OutputPass();
     composer.addPass(output);
+    // Grade after the output pass: it works on display colour, as a photo grade does.
+    composer.addPass(createGradePass());
     composer.setPixelRatio(this.pixelRatio);
     this.composer = composer;
   }
@@ -230,13 +234,16 @@ export class WorldRenderer {
 
     // Ground colour tracks vegetation, snow, moisture and fire scars.
     this.terrainMesh.refresh();
+    const rainHere = world.climate.rainIntensityAt(camera.position.x, camera.position.z) / 1.4;
+    // Ripples: rain and the animals in the water drive the surface simulation.
+    this.terrainMesh.stepWater(rainHere, dt);
     this.terrainMesh.update(
       atmosphere.sunDir,
       this.sunColor,
       atmosphere.fogColor,
       world.climate.windSpeed,
       world.climate.windDirection,
-      world.climate.rainIntensityAt(camera.position.x, camera.position.z) / 1.4,
+      rainHere,
       dt,
       clamp01(world.fire.smoke * 0.4 + world.climate.globalDimming),
     );

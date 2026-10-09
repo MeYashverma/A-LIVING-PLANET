@@ -11,6 +11,12 @@ export default defineConfig({
       // WebGL + worker friendly; avoid CSP surprises in previews.
       'Cross-Origin-Opener-Policy': 'same-origin',
     },
+    watch: {
+      // Generated assets and tooling output change often (model builds, dist
+      // from `vite build`). Watching them forces a full page reload on every
+      // write. Static files are still served fresh without a watch.
+      ignored: ['**/public/**', '**/tools/**', '**/dist/**', '**/.git/**'],
+    },
   },
   build: {
     target: 'es2022',

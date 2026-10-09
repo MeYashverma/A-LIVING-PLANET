@@ -2,6 +2,25 @@ import * as THREE from 'three';
 import { clamp, clamp01, lerp, TAU } from '../core/math';
 import type { Creatures } from '../life/organism';
 import { SPECIES, type Morphology } from '../life/species';
+import { SkinnedAnimals, addDeathClip } from './skinnedAnimals';
+import { buildRiggedAnimal, loadGeneratedRig } from './proceduralRig';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+
+/**
+ * Real CC0 rigged models by Quaternius (Ultimate Animated Animal Pack), with
+ * their clip names mapped to the simulation's states. See ATTRIBUTION.md.
+ * The goat (CC BY 4.0, Hendrik Reyneke) and bear (CC BY 4.0, molochdadev via Poly Pizza)
+ * are rigged here with procedural clips (tools/animal_models/rig_goat.py). See ATTRIBUTION.md.
+ */
+const QUATERNIUS: Partial<Record<string, { url: string; clips: { idle: string; walk: string; run: string; rest: string; die: string; bite: string } }>> = {
+  deer: { url: 'assets/models/quaternius/stag.glb', clips: { idle: 'Idle', walk: 'Walk', run: 'Gallop', rest: 'Eating', die: 'Death', bite: 'Attack_Headbutt' } },
+  wolf: { url: 'assets/models/quaternius/wolf.glb', clips: { idle: 'Idle', walk: 'Walk', run: 'Gallop', rest: 'Eating', die: 'Death', bite: 'Attack' } },
+  goat: { url: 'assets/models/reyneke/goat.glb', clips: { idle: 'Idle', walk: 'Walk', run: 'Gallop', rest: 'Idle', die: 'Death', bite: 'Eating' } },
+  bear: { url: 'assets/models/molochdadev/bear.glb', clips: { idle: 'Idle', walk: 'Walk', run: 'Gallop', rest: 'Idle', die: 'Death', bite: 'Eating' } },
+  // Hare (CC BY 4.0, Dakota.Hinkle, Sketchfab): a long-eared lagomorph standing in for the rabbit.
+  // Its own clips have no Death, so one is added at load time (addDeathClip).
+  rabbit: { url: 'assets/models/storybook/hare.glb', clips: { idle: 'Idle', walk: 'Walk', run: 'Run', rest: 'LookAround', die: 'Death', bite: 'Graze' } },
+};
 import { RENDER } from '../core/config';
 import type { World } from '../world/world';
 
@@ -124,8 +143,8 @@ function bodyGeo(rx: number, ry: number, rz: number, seg = 8): THREE.BufferGeome
   return g;
 }
 
-function legGeo(from: THREE.Vector3, to: THREE.Vector3, thickness: number, segments = 2): THREE.BufferGeometry {
-  const g = new THREE.CylinderGeometry(thickness * 0.75, thickness * 0.5, 1, 5, segments);
+function legGeo(from: THREE.Vector3, to: THREE.Vector3, thickness: number, segments = 2, radial = 5): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(thickness * 0.75, thickness * 0.5, 1, radial, segments);
   const dir = new THREE.Vector3().subVectors(to, from);
   const len = dir.length();
   g.translate(0, 0.5, 0);
@@ -134,7 +153,7 @@ function legGeo(from: THREE.Vector3, to: THREE.Vector3, thickness: number, segme
   g.applyQuaternion(q);
   g.translate(from.x, from.y, from.z);
   // A hoof/foot pad.
-  const foot = new THREE.SphereGeometry(thickness * 0.75, 5, 3);
+  const foot = new THREE.SphereGeometry(thickness * 0.75, radial, Math.max(3, Math.round(radial * 0.6)));
   foot.scale(1, 0.6, 1.1);
   foot.translate(to.x, to.y - thickness * 0.3, to.z);
   return mergeRaw([g, foot]);
@@ -153,41 +172,465 @@ function mergeRaw(geos: THREE.BufferGeometry[], color: [number, number, number] 
 }
 
 /** Quadruped: body, neck, head, ears, four legs, tail, optional headgear. */
-function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
+/**
+ * Per-species features on top of the shared quadruped template. Each entry
+ * adds geometry that no other species has, so no two quadrupeds share the same
+ * silhouette details.
+ */
+function addQuadrupedSignature(
+  key: string,
+  pieces: Piece[],
+  m: Morphology,
+  headPos: THREE.Vector3,
+  neckPivot: THREE.Vector3,
+  bodyY: number,
+): void {
+  const hs = m.headSize;
+  const bl = m.bodyLength;
+  const girth = m.bodyGirth;
+  const add = (geo: THREE.BufferGeometry, part: number, pivot: THREE.Vector3, color: [number, number, number]) =>
+    pieces.push({ geo: tag(geo, part, pivot), part, pivot: pivot.clone(), color });
+  const headPivot = neckPivot;
+  switch (key) {
+    case 'rabbit': {
+      // Long upright ears, pale inside.
+      for (const side of [-1, 1]) {
+        const ear = paint(bodyGeo(hs * 0.22, hs * 1.15, hs * 0.1, 12), m.fur, 0.05, 61);
+        ear.translate(headPos.x - hs * 0.15, headPos.y + hs * 1.0, side * hs * 0.3);
+        add(ear, PART.head, headPivot, m.fur);
+      }
+      break;
+    }
+    case 'bison': {
+      // Shoulder hump and a beard under the chin.
+      const hump = paint(bodyGeo(bl * 0.22, girth * 0.55, girth * 0.85, 16), m.fur, 0.06, 63);
+      hump.translate(bl * 0.22, bodyY + girth * 0.62, 0);
+      add(hump, PART.body, new THREE.Vector3(bl * 0.22, bodyY + girth * 0.62, 0), m.fur);
+      const beard = paint(bodyGeo(hs * 0.3, hs * 0.55, hs * 0.22, 10), m.accent, 0.05, 65);
+      beard.translate(headPos.x + hs * 0.35, headPos.y - hs * 0.55, 0);
+      add(beard, PART.head, headPivot, m.accent);
+      break;
+    }
+    case 'goat': {
+      // Chin beard.
+      const beard = paint(bodyGeo(hs * 0.14, hs * 0.5, hs * 0.14, 8), m.accent, 0.05, 67);
+      beard.translate(headPos.x + hs * 0.55, headPos.y - hs * 0.6, 0);
+      add(beard, PART.head, headPivot, m.accent);
+      break;
+    }
+    case 'lynx': {
+      // Ear tufts and cheek ruff.
+      for (const side of [-1, 1]) {
+        const tuft = paint(new THREE.ConeGeometry(hs * 0.12, hs * 0.45, 8, 1), m.accent, 0.04, 69);
+        tuft.translate(headPos.x - hs * 0.1, headPos.y + hs * 1.05, side * hs * 0.42);
+        add(tuft, PART.head, headPivot, m.accent);
+        const ruff = paint(bodyGeo(hs * 0.3, hs * 0.45, hs * 0.2, 10), m.accent, 0.05, 71);
+        ruff.translate(headPos.x - hs * 0.1, headPos.y - hs * 0.15, side * hs * 0.55);
+        add(ruff, PART.head, headPivot, m.accent);
+      }
+      break;
+    }
+    case 'wolf': {
+      // Thick neck ruff.
+      const ruff = paint(bodyGeo(hs * 0.7, hs * 0.75, hs * 0.75, 14), m.accent, 0.06, 73);
+      ruff.translate(neckPivot.x + (headPos.x - neckPivot.x) * 0.55, neckPivot.y + (headPos.y - neckPivot.y) * 0.55, 0);
+      add(ruff, PART.head, headPivot, m.accent);
+      break;
+    }
+    case 'deer': {
+      // Pale rump patch.
+      const rump = paint(bodyGeo(bl * 0.12, girth * 0.5, girth * 0.7, 12), [0.93, 0.91, 0.85], 0.03, 75);
+      rump.translate(-bl * 0.45, bodyY + girth * 0.15, 0);
+      add(rump, PART.body, new THREE.Vector3(-bl * 0.45, bodyY, 0), [0.93, 0.91, 0.85]);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+/**
+ * Wolf, built by hand: a deep chest and slim waist, long legs, a long muzzle
+ * with a dark nose, erect ears, a dark neck ruff and a bushy tail carried low.
+ */
+export function buildWolf(m: Morphology, detail: boolean): THREE.BufferGeometry {
+  const L = m.bodyLength;
+  const G = m.bodyGirth;
+  const S = m.standHeight;
+  const H = m.headSize;
+  const pieces: Piece[] = [];
+  const add = (geo: THREE.BufferGeometry, part: number, pivot: THREE.Vector3, color: [number, number, number]) => {
+    pieces.push({ geo: tag(geo, part, pivot), part, pivot: pivot.clone(), color });
+  };
+  const seg = detail ? 18 : 6;
+  const legCol: [number, number, number] = [m.fur[0] * 0.72, m.fur[1] * 0.72, m.fur[2] * 0.72];
+  const origin = new THREE.Vector3();
+  const sph = (rx: number, ry: number, rz: number, x: number, y: number, z: number, color: [number, number, number], seed: number, part = PART.body, pivot = origin) => {
+    const g = paint(bodyGeo(rx, ry, rz, seg), color, 0.06, seed);
+    g.translate(x, y, z);
+    add(g, part, pivot, color);
+  };
+
+  // Deep chest, slim waist, strong hindquarters.
+  sph(L * 0.3, G * 0.56, G * 0.62, L * 0.16, S + G * 0.04, 0, m.fur, 3);
+  sph(L * 0.26, G * 0.46, G * 0.5, -L * 0.2, S, 0, m.fur, 5);
+  sph(L * 0.28, G * 0.26, G * 0.36, L * 0.04, S - G * 0.34, 0, m.belly, 7);
+
+  // Neck and head.
+  const neckPivot = new THREE.Vector3(L * 0.34, S + G * 0.25, 0);
+  const headC = new THREE.Vector3(L * 0.6, S + G * 0.72, 0);
+  add(tube(neckPivot, headC, G * 0.4, H * 0.52, detail ? 14 : 6), PART.head, neckPivot, m.fur);
+  // Dark ruff around the neck.
+  sph(G * 0.42, G * 0.46, G * 0.46, (neckPivot.x + headC.x) * 0.5, (neckPivot.y + headC.y) * 0.5 + G * 0.02, 0, m.accent, 9, PART.head, neckPivot);
+  sph(H * 0.8, H * 0.6, H * 0.56, headC.x, headC.y, 0, m.fur, 13, PART.head, neckPivot);
+  // Long muzzle with a dark nose.
+  sph(H * 0.78, H * 0.3, H * 0.3, headC.x + H * 0.9, headC.y - H * 0.16, 0, m.fur, 15, PART.head, neckPivot);
+  sph(H * 0.14, H * 0.12, H * 0.14, headC.x + H * 1.7, headC.y - H * 0.12, 0, m.eye, 17, PART.head, neckPivot);
+  if (detail) {
+    for (const side of [-1, 1]) {
+      sph(H * 0.11, H * 0.11, H * 0.11, headC.x + H * 0.45, headC.y + H * 0.2, side * H * 0.4, m.eye, 19, PART.head, neckPivot);
+    }
+  }
+
+  // Erect triangular ears on the top of the skull.
+  for (const side of [-1, 1]) {
+    const part = side < 0 ? PART.earL : PART.earR;
+    const base = new THREE.Vector3(headC.x - H * 0.2, headC.y + H * 0.4, side * H * 0.32);
+    const ear = paint(new THREE.ConeGeometry(H * 0.26, H * 0.85, detail ? 10 : 4, 1), m.fur, 0.05, 21 + side);
+    ear.translate(base.x, base.y + H * 0.42, base.z);
+    add(ear, part, base, m.fur);
+  }
+
+  // Legs: long and slender, with a thigh at the hip.
+  for (const side of [-1, 1]) {
+    const shoulder = new THREE.Vector3(L * 0.3, S - G * 0.2, side * G * 0.4);
+    const paw = new THREE.Vector3(L * 0.33, 0.02, side * G * 0.4);
+    add(paint(mergeRaw([legGeo(shoulder.clone(), paw.clone(), G * 0.13, 2, detail ? 10 : 5)]), legCol, 0.05, 45 + side), side < 0 ? PART.legFL : PART.legFR, shoulder, legCol);
+    const hip = new THREE.Vector3(-L * 0.24, S - G * 0.18, side * G * 0.42);
+    const thigh = paint(bodyGeo(G * 0.4, G * 0.44, G * 0.36, detail ? 14 : 5), m.fur, 0.05, 31 + side);
+    thigh.translate(hip.x, hip.y, hip.z);
+    add(thigh, side < 0 ? PART.legRL : PART.legRR, hip, m.fur);
+    const hock = new THREE.Vector3(-L * 0.36, 0.02 + G * 0.2, side * G * 0.42);
+    add(paint(mergeRaw([legGeo(hip.clone(), hock.clone(), G * 0.13, 2, detail ? 10 : 5)]), legCol, 0.05, 47 + side), side < 0 ? PART.legRL : PART.legRR, hip, legCol);
+  }
+
+  // Bushy tail, carried low and tipped dark.
+  const tailPivot = new THREE.Vector3(-L * 0.5, S + G * 0.1, 0);
+  add(tube(tailPivot, new THREE.Vector3(-L * 0.86, S - G * 0.26, 0), G * 0.22, G * 0.32, detail ? 12 : 5), PART.tail, tailPivot, m.fur);
+  sph(G * 0.2, G * 0.2, G * 0.2, -L * 0.9, S - G * 0.3, 0, m.accent, 49, PART.tail, tailPivot);
+
+  const merged = mergePieces(pieces);
+  applyPattern(merged, m);
+  return merged;
+}
+
+/**
+ * Lynx, built by hand: a compact body with long hind legs, large padded paws,
+ * a round head with a short muzzle, cheek ruffs, black-tipped ear tufts and a
+ * short stub tail.
+ */
+export function buildLynx(m: Morphology, detail: boolean): THREE.BufferGeometry {
+  const L = m.bodyLength;
+  const G = m.bodyGirth;
+  const S = m.standHeight;
+  const H = m.headSize;
+  const pieces: Piece[] = [];
+  const add = (geo: THREE.BufferGeometry, part: number, pivot: THREE.Vector3, color: [number, number, number]) => {
+    pieces.push({ geo: tag(geo, part, pivot), part, pivot: pivot.clone(), color });
+  };
+  const seg = detail ? 18 : 6;
+  const legCol: [number, number, number] = [m.fur[0] * 0.8, m.fur[1] * 0.8, m.fur[2] * 0.8];
+  const origin = new THREE.Vector3();
+  const sph = (rx: number, ry: number, rz: number, x: number, y: number, z: number, color: [number, number, number], seed: number, part = PART.body, pivot = origin) => {
+    const g = paint(bodyGeo(rx, ry, rz, seg), color, 0.06, seed);
+    g.translate(x, y, z);
+    add(g, part, pivot, color);
+  };
+
+  // Compact body, higher at the hindquarters.
+  sph(L * 0.32, G * 0.6, G * 0.62, 0, S + G * 0.03, 0, m.fur, 3);
+  sph(L * 0.24, G * 0.6, G * 0.62, -L * 0.2, S + G * 0.08, 0, m.fur, 5);
+  sph(L * 0.26, G * 0.3, G * 0.4, L * 0.02, S - G * 0.34, 0, m.belly, 7);
+
+  // Round head on a short neck.
+  const neckPivot = new THREE.Vector3(L * 0.34, S + G * 0.3, 0);
+  const headC = new THREE.Vector3(L * 0.55, S + G * 0.62, 0);
+  add(tube(neckPivot, headC, G * 0.42, H * 0.6, detail ? 14 : 6), PART.head, neckPivot, m.fur);
+  sph(H * 0.9, H * 0.82, H * 0.8, headC.x, headC.y, 0, m.fur, 13, PART.head, neckPivot);
+  // Cheek ruffs.
+  for (const side of [-1, 1]) {
+    sph(H * 0.4, H * 0.58, H * 0.42, headC.x - H * 0.1, headC.y - H * 0.28, side * H * 0.62, m.accent, 15 + side, PART.head, neckPivot);
+  }
+  // Short muzzle and nose.
+  sph(H * 0.5, H * 0.36, H * 0.4, headC.x + H * 0.62, headC.y - H * 0.2, 0, m.accent, 17, PART.head, neckPivot);
+  sph(H * 0.12, H * 0.1, H * 0.12, headC.x + H * 1.05, headC.y - H * 0.12, 0, m.eye, 19, PART.head, neckPivot);
+  if (detail) {
+    for (const side of [-1, 1]) {
+      sph(H * 0.12, H * 0.12, H * 0.12, headC.x + H * 0.42, headC.y + H * 0.2, side * H * 0.4, m.eye, 21, PART.head, neckPivot);
+    }
+  }
+
+  // Ears with black-tipped tufts.
+  for (const side of [-1, 1]) {
+    const part = side < 0 ? PART.earL : PART.earR;
+    const base = new THREE.Vector3(headC.x - H * 0.25, headC.y + H * 0.55, side * H * 0.42);
+    const ear = paint(new THREE.ConeGeometry(H * 0.3, H * 0.5, detail ? 10 : 4, 1), m.fur, 0.05, 23 + side);
+    ear.translate(base.x, base.y + H * 0.25, base.z);
+    add(ear, part, base, m.fur);
+    const tuft = paint(new THREE.ConeGeometry(H * 0.1, H * 0.4, detail ? 8 : 4, 1), m.eye, 0.03, 25 + side);
+    tuft.translate(base.x, base.y + H * 0.7, base.z);
+    add(tuft, part, base, m.eye);
+  }
+
+  // Long hind legs and shorter forelegs, with large padded paws.
+  for (const side of [-1, 1]) {
+    const shoulder = new THREE.Vector3(L * 0.28, S - G * 0.25, side * G * 0.4);
+    const paw = new THREE.Vector3(L * 0.32, 0.02, side * G * 0.4);
+    add(paint(mergeRaw([legGeo(shoulder.clone(), paw.clone(), G * 0.12, 2, detail ? 10 : 5)]), legCol, 0.05, 45 + side), side < 0 ? PART.legFL : PART.legFR, shoulder, legCol);
+    const hip = new THREE.Vector3(-L * 0.22, S - G * 0.2, side * G * 0.42);
+    const hindPaw = new THREE.Vector3(-L * 0.26, 0.02, side * G * 0.42);
+    const thigh = paint(bodyGeo(G * 0.38, G * 0.42, G * 0.34, detail ? 14 : 5), m.fur, 0.05, 31 + side);
+    thigh.translate(hip.x, hip.y, hip.z);
+    add(thigh, side < 0 ? PART.legRL : PART.legRR, hip, m.fur);
+    add(paint(mergeRaw([legGeo(hip.clone(), hindPaw.clone(), G * 0.13, 2, detail ? 10 : 5)]), legCol, 0.05, 47 + side), side < 0 ? PART.legRL : PART.legRR, hip, legCol);
+    const pad = paint(bodyGeo(L * 0.1, G * 0.1, G * 0.14, detail ? 10 : 4), legCol, 0.04, 49 + side);
+    pad.translate(paw.x + L * 0.02, 0.03, paw.z);
+    add(pad, side < 0 ? PART.legFL : PART.legFR, shoulder, legCol);
+  }
+
+  // Stub tail.
+  const tailPivot = new THREE.Vector3(-L * 0.5, S + G * 0.2, 0);
+  const tail = paint(new THREE.CylinderGeometry(G * 0.12, G * 0.18, G * 0.5, detail ? 10 : 5, 1), m.fur, 0.05, 51);
+  tail.rotateZ(-0.5);
+  tail.translate(tailPivot.x - G * 0.15, tailPivot.y - G * 0.1, 0);
+  add(tail, PART.tail, tailPivot, m.fur);
+
+  const merged = mergePieces(pieces);
+  applyPattern(merged, m);
+  return merged;
+}
+
+/**
+ * Deer, built by hand: a slender barrel body, a long neck carrying a narrow
+ * head, large ears, a branched antler pair, long slender legs with fine feet,
+ * a pale rump patch and a short tail.
+ */
+export function buildDeer(m: Morphology, detail: boolean): THREE.BufferGeometry {
+  const L = m.bodyLength;
+  const G = m.bodyGirth;
+  const S = m.standHeight;
+  const H = m.headSize;
+  const pieces: Piece[] = [];
+  const add = (geo: THREE.BufferGeometry, part: number, pivot: THREE.Vector3, color: [number, number, number]) => {
+    pieces.push({ geo: tag(geo, part, pivot), part, pivot: pivot.clone(), color });
+  };
+  const seg = detail ? 18 : 6;
+  // Legs take a darker shade of the coat, so they do not read as bare sticks.
+  const legCol: [number, number, number] = [m.fur[0] * 0.78, m.fur[1] * 0.78, m.fur[2] * 0.78];
+  const origin = new THREE.Vector3();
+  const sph = (rx: number, ry: number, rz: number, x: number, y: number, z: number, color: [number, number, number], seed: number, part = PART.body, pivot = origin) => {
+    const g = paint(bodyGeo(rx, ry, rz, seg), color, 0.05, seed);
+    g.translate(x, y, z);
+    add(g, part, pivot, color);
+  };
+
+  // Barrel body, slightly deeper at the chest.
+  sph(L * 0.42, G * 0.5, G * 0.52, 0, S, 0, m.fur, 3);
+  sph(L * 0.22, G * 0.46, G * 0.5, L * 0.22, S - G * 0.02, 0, m.fur, 5);
+  sph(L * 0.3, G * 0.28, G * 0.36, L * 0.02, S - G * 0.3, 0, m.belly, 7);
+  // Pale rump patch.
+  sph(L * 0.12, G * 0.36, G * 0.5, -L * 0.42, S + G * 0.02, 0, [0.93, 0.91, 0.85], 9);
+
+  // Long neck and narrow head.
+  const neckPivot = new THREE.Vector3(L * 0.36, S + G * 0.2, 0);
+  const headC = new THREE.Vector3(L * 0.66, S + G * 0.85, 0);
+  add(tube(neckPivot, headC, G * 0.36, H * 0.48, detail ? 14 : 6), PART.head, neckPivot, m.fur);
+  sph(H * 0.85, H * 0.5, H * 0.5, headC.x, headC.y, 0, m.fur, 13, PART.head, neckPivot);
+  sph(H * 0.9, H * 0.42, H * 0.4, headC.x + H * 0.55, headC.y - H * 0.18, 0, m.fur, 15, PART.head, neckPivot);
+  sph(H * 0.32, H * 0.28, H * 0.3, headC.x + H * 1.1, headC.y - H * 0.25, 0, m.accent, 17, PART.head, neckPivot);
+  if (detail) {
+    for (const side of [-1, 1]) {
+      sph(H * 0.12, H * 0.12, H * 0.12, headC.x + H * 0.2, headC.y + H * 0.22, side * H * 0.42, m.eye, 19, PART.head, neckPivot);
+    }
+  }
+
+  // Large ears that flare sideways from the back of the head.
+  for (const side of [-1, 1]) {
+    const part = side < 0 ? PART.earL : PART.earR;
+    const base = new THREE.Vector3(headC.x - H * 0.25, headC.y + H * 0.15, side * H * 0.35);
+    const ear = paint(bodyGeo(H * 0.14, H * 0.55, H * 0.45, detail ? 10 : 5), m.fur, 0.05, 21 + side);
+    ear.rotateZ(side * 0.5);
+    ear.translate(base.x, base.y + H * 0.1, base.z + side * H * 0.35);
+    add(ear, part, base, m.fur);
+  }
+
+  // Antlers: a beam with two tines on each side.
+  if (detail) {
+    for (const side of [-1, 1]) {
+      const root = new THREE.Vector3(headC.x - H * 0.2, headC.y + H * 0.45, side * H * 0.22);
+      const tip = new THREE.Vector3(root.x - H * 0.3, root.y + H * 2.0, side * H * 0.5);
+      add(tube(root, tip, H * 0.12, H * 0.07, 6), PART.head, neckPivot, m.accent);
+      for (const t of [0.45, 0.7]) {
+        const at = new THREE.Vector3().lerpVectors(root, tip, t);
+        const tine = new THREE.Vector3(at.x + H * 0.55, at.y + H * 0.45, at.z + side * H * 0.12);
+        add(tube(at, tine, H * 0.06, H * 0.03, 5), PART.head, neckPivot, m.accent);
+      }
+    }
+  }
+
+  // Legs: long and slender, from shoulder and hip to small hooves.
+  for (const side of [-1, 1]) {
+    const shoulder = new THREE.Vector3(L * 0.32, S - G * 0.3, side * G * 0.36);
+    const hoof = new THREE.Vector3(L * 0.34, 0.02, side * G * 0.36);
+    add(paint(mergeRaw([legGeo(shoulder.clone(), hoof.clone(), G * 0.1, 3, detail ? 10 : 5)]), legCol, 0.05, 45 + side), side < 0 ? PART.legFL : PART.legFR, shoulder, legCol);
+    const hip = new THREE.Vector3(-L * 0.3, S - G * 0.3, side * G * 0.36);
+    const hindHoof = new THREE.Vector3(-L * 0.32, 0.02, side * G * 0.36);
+    add(paint(mergeRaw([legGeo(hip.clone(), hindHoof.clone(), G * 0.1, 3, detail ? 10 : 5)]), legCol, 0.05, 47 + side), side < 0 ? PART.legRL : PART.legRR, hip, legCol);
+  }
+
+  // Short tail.
+  const tailPivot = new THREE.Vector3(-L * 0.5, S + G * 0.3, 0);
+  sph(G * 0.12, G * 0.14, G * 0.12, -L * 0.52, S + G * 0.24, 0, m.belly, 41, PART.tail, tailPivot);
+
+  const merged = mergePieces(pieces);
+  applyPattern(merged, m);
+  return merged;
+}
+
+/**
+ * Rabbit, built by hand rather than from the shared quadruped template: a
+ * haunched rump, a short neck, a muzzle with a pink nose, long ears with pale
+ * insides, folded forelegs, long hind feet and a white scut.
+ */
+export function buildRabbit(m: Morphology, detail: boolean): THREE.BufferGeometry {
+  const L = m.bodyLength;
+  const G = m.bodyGirth;
+  const S = m.standHeight;
+  const H = m.headSize;
+  const pieces: Piece[] = [];
+  const add = (geo: THREE.BufferGeometry, part: number, pivot: THREE.Vector3, color: [number, number, number]) => {
+    pieces.push({ geo: tag(geo, part, pivot), part, pivot: pivot.clone(), color });
+  };
+  const seg = detail ? 18 : 6;
+  // Legs take a darker shade of the coat, so they do not read as bare sticks.
+  const legCol: [number, number, number] = [m.fur[0] * 0.78, m.fur[1] * 0.78, m.fur[2] * 0.78];
+  const origin = new THREE.Vector3();
+  const sph = (rx: number, ry: number, rz: number, x: number, y: number, z: number, color: [number, number, number], seed: number, part = PART.body, pivot = origin) => {
+    const g = paint(bodyGeo(rx, ry, rz, seg), color, 0.06, seed);
+    g.translate(x, y, z);
+    add(g, part, pivot, color);
+  };
+
+  // Torso: a rounded body with the haunch at the rear.
+  sph(L * 0.38, G * 0.6, G * 0.64, 0, S, 0, m.fur, 3);
+  sph(L * 0.26, G * 0.7, G * 0.74, -L * 0.18, S + G * 0.04, 0, m.fur, 5);
+  sph(L * 0.22, G * 0.52, G * 0.55, L * 0.22, S - G * 0.03, 0, m.fur, 7);
+  sph(L * 0.3, G * 0.3, G * 0.4, L * 0.02, S - G * 0.34, 0, m.belly, 9);
+
+  // Neck and head.
+  const neckPivot = new THREE.Vector3(L * 0.34, S + G * 0.15, 0);
+  const headC = new THREE.Vector3(L * 0.5 + H * 0.2, S + G * 0.3 + H * 0.15, 0);
+  add(tube(neckPivot, headC, G * 0.42, H * 0.6, detail ? 14 : 6), PART.head, neckPivot, m.fur);
+  sph(H * 0.9, H * 0.78, H * 0.72, headC.x, headC.y, 0, m.fur, 13, PART.head, neckPivot);
+  sph(H * 0.5, H * 0.42, H * 0.5, headC.x + H * 0.08, headC.y - H * 0.25, 0, m.fur, 15, PART.head, neckPivot);
+
+  // Muzzle and nose.
+  sph(H * 0.42, H * 0.34, H * 0.36, headC.x + H * 0.7, headC.y - H * 0.18, 0, m.accent, 17, PART.head, neckPivot);
+  sph(H * 0.13, H * 0.11, H * 0.13, headC.x + H * 1.1, headC.y - H * 0.1, 0, [0.86, 0.55, 0.55], 19, PART.head, neckPivot);
+
+  // Eyes.
+  if (detail) {
+    for (const side of [-1, 1]) {
+      sph(H * 0.17, H * 0.17, H * 0.17, headC.x + H * 0.46, headC.y + H * 0.14, side * H * 0.6, m.eye, 21, PART.head, neckPivot);
+    }
+  }
+
+  // Long ears, pale inside. Each ear pivots at the top of the head.
+  for (const side of [-1, 1]) {
+    const part = side < 0 ? PART.earL : PART.earR;
+    const base = new THREE.Vector3(headC.x - H * 0.2, headC.y + H * 0.6, side * H * 0.32);
+    const ear = paint(bodyGeo(H * 0.2, H * 1.15, H * 0.1, detail ? 12 : 5), m.fur, 0.05, 23 + side);
+    ear.rotateZ(-0.18);
+    ear.translate(base.x, base.y + H * 1.0, base.z);
+    add(ear, part, base, m.fur);
+    const inner = paint(bodyGeo(H * 0.09, H * 0.95, H * 0.03, detail ? 10 : 4), m.accent, 0.04, 29 + side);
+    inner.rotateZ(-0.18);
+    inner.translate(base.x + H * 0.02, base.y + H * 0.95, base.z + side * H * 0.07);
+    add(inner, part, base, m.accent);
+  }
+
+  // Front legs, folded under the chest.
+  for (const side of [-1, 1]) {
+    const shoulder = new THREE.Vector3(L * 0.3, S - G * 0.4, side * G * 0.4);
+    const paw = new THREE.Vector3(L * 0.34, 0.03, side * G * 0.4);
+    const part = side < 0 ? PART.legFL : PART.legFR;
+    add(paint(mergeRaw([legGeo(shoulder.clone(), paw.clone(), G * 0.13, 2, detail ? 10 : 5)]), legCol, 0.05, 45 + part), part, shoulder, legCol);
+  }
+
+  // Hind legs: a big thigh at the hip and a long hind foot.
+  for (const side of [-1, 1]) {
+    const hip = new THREE.Vector3(-L * 0.22, S - G * 0.1, side * G * 0.5);
+    const part = side < 0 ? PART.legRL : PART.legRR;
+    const thigh = paint(bodyGeo(G * 0.42, G * 0.46, G * 0.36, detail ? 14 : 5), m.fur, 0.05, 31 + side);
+    thigh.translate(hip.x, hip.y, hip.z);
+    add(thigh, part, hip, m.fur);
+    const shin = paint(legGeo(hip.clone(), new THREE.Vector3(-L * 0.12, 0.05, side * G * 0.5), G * 0.14, 2, detail ? 10 : 5), legCol, 0.05, 37 + side);
+    add(shin, part, hip, m.accent);
+    const foot = paint(bodyGeo(L * 0.2, G * 0.1, G * 0.2, detail ? 12 : 5), legCol, 0.04, 41 + side);
+    foot.translate(-L * 0.08, 0.05, side * G * 0.5);
+    add(foot, part, hip, m.accent);
+  }
+
+  // Scut.
+  const tailPivot = new THREE.Vector3(-L * 0.5, S, 0);
+  sph(G * 0.3, G * 0.3, G * 0.3, -L * 0.52, S + G * 0.05, 0, m.belly, 43, PART.tail, tailPivot);
+
+  const merged = mergePieces(pieces);
+  applyPattern(merged, m);
+  return merged;
+}
+
+export function buildQuadruped(m: Morphology, detail: boolean, key?: string): THREE.BufferGeometry {
+  if (key === 'rabbit') return buildRabbit(m, detail);
+  if (key === 'deer') return buildDeer(m, detail);
+  if (key === 'wolf') return buildWolf(m, detail);
+  if (key === 'lynx') return buildLynx(m, detail);
   const pieces: Piece[] = [];
   const stand = m.standHeight;
   const bl = m.bodyLength;
   const girth = m.bodyGirth;
   const bodyY = stand;
 
-  const body = paint(bodyGeo(bl * 0.5, girth * 0.75, girth, detail ? 10 : 6), m.fur, 0.08, 3);
+  const body = paint(bodyGeo(bl * 0.5, girth * 0.75, girth, detail ? 26 : 6), m.fur, 0.08, 3);
   body.translate(0, bodyY, 0);
   pieces.push({ geo: tag(body, PART.body, new THREE.Vector3(0, bodyY, 0)), part: PART.body, pivot: new THREE.Vector3(0, bodyY, 0), color: m.fur });
 
   // Chest and belly shading.
-  const belly = paint(bodyGeo(bl * 0.42, girth * 0.55, girth * 0.9, 6), m.belly, 0.05, 7);
+  const belly = paint(bodyGeo(bl * 0.42, girth * 0.55, girth * 0.9, detail ? 16 : 6), m.belly, 0.05, 7);
   belly.translate(bl * 0.06, bodyY - girth * 0.28, 0);
   pieces.push({ geo: tag(belly, PART.body, new THREE.Vector3()), part: PART.body, pivot: new THREE.Vector3(), color: m.belly });
 
   // Neck + head pivot at the shoulders.
   const neckPivot = new THREE.Vector3(bl * 0.42, bodyY + girth * 0.35, 0);
   const neckLen = m.neck + m.headSize * 0.5;
-  const neck = paint(new THREE.CylinderGeometry(m.headSize * 0.32, girth * 0.5, 1, detail ? 7 : 5), m.fur, 0.06, 11);
+  const neck = paint(new THREE.CylinderGeometry(m.headSize * 0.32, girth * 0.5, 1, detail ? 18 : 5, detail ? 6 : 1), m.fur, 0.06, 11);
+  // Orient the neck about its own centre first, then move it so its base sits
+  // on the shoulder pivot and its far end reaches the head. Translating before
+  // rotating swings the neck around the world origin and detaches the head.
   neck.scale(1, neckLen, 1);
-  neck.translate(neckPivot.x, neckPivot.y, 0);
   const neckDir = new THREE.Vector3(1, 0.45, 0).normalize();
   const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), neckDir);
   neck.applyQuaternion(q);
-  neck.translate(0, 0, 0);
+  neck.translate(neckPivot.x + neckDir.x * neckLen * 0.5, neckPivot.y + neckDir.y * neckLen * 0.5, 0);
   pieces.push({ geo: tag(neck, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.fur });
 
   const headPos = new THREE.Vector3(neckPivot.x + neckDir.x * neckLen, neckPivot.y + neckDir.y * neckLen, 0);
-  const head = paint(bodyGeo(m.headSize * 0.85, m.headSize * 0.7, m.headSize * 0.7, detail ? 8 : 5), m.fur, 0.06, 13);
+  const head = paint(bodyGeo(m.headSize * 0.85, m.headSize * 0.7, m.headSize * 0.7, detail ? 22 : 5), m.fur, 0.06, 13);
   head.translate(headPos.x, headPos.y, 0);
   pieces.push({ geo: tag(head, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.fur });
 
   // Muzzle.
-  const muzzle = paint(new THREE.CylinderGeometry(m.headSize * 0.3, m.headSize * 0.42, m.headSize * 0.8, 6), m.accent, 0.05, 17);
+  const muzzle = paint(new THREE.CylinderGeometry(m.headSize * 0.3, m.headSize * 0.42, m.headSize * 0.8, detail ? 16 : 6, detail ? 4 : 1), m.accent, 0.05, 17);
   const mq = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, -0.15, 0).normalize());
   muzzle.applyQuaternion(mq);
   muzzle.translate(headPos.x + m.headSize * 0.85, headPos.y - m.headSize * 0.1, 0);
@@ -199,7 +642,7 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
   if (detail) {
     const eyeR = Math.max(0.012, m.headSize * 0.16);
     for (const side of [-1, 1]) {
-      const eye = paint(new THREE.SphereGeometry(eyeR, 8, 6), m.eye, 0.02, 37);
+      const eye = paint(new THREE.SphereGeometry(eyeR, 16, 12), m.eye, 0.02, 37);
       eye.translate(headPos.x + m.headSize * 0.42, headPos.y + m.headSize * 0.2, side * m.headSize * 0.36);
       pieces.push({ geo: tag(eye, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.eye });
       // A hint of brow above the eye, which is what gives a face expression.
@@ -208,7 +651,7 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
       brow.translate(headPos.x + m.headSize * 0.4, headPos.y + m.headSize * 0.42, side * m.headSize * 0.36);
       pieces.push({ geo: tag(brow, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.accent });
     }
-    const nose = paint(new THREE.SphereGeometry(m.headSize * 0.16, 6, 5), m.eye, 0.02, 43);
+    const nose = paint(new THREE.SphereGeometry(m.headSize * 0.16, 12, 9), m.eye, 0.02, 43);
     nose.translate(headPos.x + m.headSize * 1.24, headPos.y - m.headSize * 0.14, 0);
     pieces.push({ geo: tag(nose, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.eye });
   }
@@ -216,7 +659,7 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
   // Ears.
   if (m.earSize > 0.03 && detail) {
     for (const side of [-1, 1]) {
-      const ear = paint(new THREE.ConeGeometry(m.earSize * 0.32, m.earSize * 1.5, 5), m.fur, 0.06, 19);
+      const ear = paint(new THREE.ConeGeometry(m.earSize * 0.32, m.earSize * 1.5, 12, 3), m.fur, 0.06, 19);
       ear.rotateZ(-0.25 * side);
       ear.rotateX(0.3);
       ear.translate(headPos.x - m.headSize * 0.1, headPos.y + m.headSize * 0.7, side * m.headSize * 0.42);
@@ -228,7 +671,7 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
   if (m.headgear === 'antlers' && detail) {
     for (const side of [-1, 1]) {
       for (let branch = 0; branch < 2; branch++) {
-        const tine = paint(new THREE.CylinderGeometry(0.045, 0.06, m.headSize * 2.4, 4), m.accent, 0.05, 23);
+        const tine = paint(new THREE.CylinderGeometry(0.045, 0.06, m.headSize * 2.4, 8, 3), m.accent, 0.05, 23);
         tine.translate(0, m.headSize * 1.2, 0);
         tine.rotateZ(side * (0.5 + branch * 0.35));
         tine.rotateX(branch === 0 ? 0.2 : -0.5);
@@ -245,10 +688,14 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
       pieces.push({ geo: tag(horn, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.accent });
     }
   } else if (m.headgear === 'mane' && detail) {
-    const mane = paint(bodyGeo(m.headSize * 1.15, m.headSize * 0.9, m.headSize * 1.05, 8), m.accent, 0.08, 31);
+    const mane = paint(bodyGeo(m.headSize * 1.15, m.headSize * 0.9, m.headSize * 1.05, 18), m.accent, 0.08, 31);
     mane.translate(headPos.x - m.headSize * 0.1, headPos.y, 0);
     pieces.push({ geo: tag(mane, PART.head, neckPivot), part: PART.head, pivot: neckPivot, color: m.accent });
   }
+
+  // Species signature: features that make this animal recognisable at a glance.
+  // Shared body templates alone made many species look alike.
+  if (detail && key) addQuadrupedSignature(key, pieces, m, headPos, neckPivot, bodyY);
 
   // Legs.
   const shoulder = new THREE.Vector3(bl * 0.33, bodyY - girth * 0.25, girth * 0.72);
@@ -264,8 +711,8 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
     const mid = new THREE.Vector3(start.x, start.y - lowerLen * 0.5, start.z);
     const end = new THREE.Vector3(start.x, 0.02, start.z);
     if (detail) {
-      const upper = paint(legGeo(start.clone(), mid.clone(), girth * 0.16), m.accent, 0.05, part * 3);
-      const lower = paint(legGeo(mid.clone(), end.clone(), girth * 0.12), m.accent, 0.05, part * 5);
+      const upper = paint(legGeo(start.clone(), mid.clone(), girth * 0.16, 4, 12), m.accent, 0.05, part * 3);
+      const lower = paint(legGeo(mid.clone(), end.clone(), girth * 0.12, 4, 12), m.accent, 0.05, part * 5);
       pieces.push({ geo: tag(mergeRaw([upper]), part, start.clone()), part, pivot: start.clone(), color: m.accent });
       // The lower leg rotates with the whole limb from the hip, which is
       // visually correct at the distances this world is watched from.
@@ -279,7 +726,7 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
   // Tail.
   if (m.tailLength > 0.02) {
     const tailPivot = new THREE.Vector3(-bl * 0.5, bodyY + girth * 0.2, 0);
-    const tail = paint(new THREE.CylinderGeometry(m.headSize * 0.14, m.headSize * 0.2, m.tailLength, 5), m.fur, 0.06, 37);
+    const tail = paint(new THREE.CylinderGeometry(m.headSize * 0.14, m.headSize * 0.2, m.tailLength, detail ? 12 : 5, detail ? 6 : 1), m.fur, 0.06, 37);
     tail.translate(0, m.tailLength * 0.5, 0);
     tail.rotateZ(-1.1);
     tail.translate(tailPivot.x, tailPivot.y, 0);
@@ -291,45 +738,186 @@ function buildQuadruped(m: Morphology, detail: boolean): THREE.BufferGeometry {
   return merged;
 }
 
+/**
+ * A thin panel with a real outline (fin, wing, tail fan): the closed polygon
+ * is extruded by `thickness`, so the panel has a true edge and a visible
+ * thickness instead of a rectangle.
+ */
+function flatPanel(outline: [number, number][], thickness: number): THREE.BufferGeometry {
+  const shape = new THREE.Shape();
+  outline.forEach(([x, y], i) => (i === 0 ? shape.moveTo(x, y) : shape.lineTo(x, y)));
+  shape.closePath();
+  const g = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false, curveSegments: 1 });
+  g.translate(0, 0, -thickness / 2);
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * A tapered tube from `from` to `to`. The cylinder is oriented about its own
+ * centre first and only then moved to the midpoint, so its ends land exactly on
+ * the two points. Translating before rotating moves it off the points.
+ */
+function tube(from: THREE.Vector3, to: THREE.Vector3, rFrom: number, rTo: number, radial: number): THREE.BufferGeometry {
+  const dir = new THREE.Vector3().subVectors(to, from);
+  const len = Math.max(0.001, dir.length());
+  const g = new THREE.CylinderGeometry(rTo, rFrom, len, radial, 4);
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize()));
+  g.translate((from.x + to.x) / 2, (from.y + to.y) / 2, (from.z + to.z) / 2);
+  return g;
+}
+
+
+/** Bird-only features, per species. */
+function addBirdSignature(key: string, pieces: Piece[], m: Morphology, headPivot: THREE.Vector3): void {
+  const hs = m.headSize;
+  const add = (geo: THREE.BufferGeometry, color: [number, number, number]) => pieces.push({ geo: tag(geo, PART.head, headPivot), part: PART.head, pivot: headPivot.clone(), color });
+  switch (key) {
+    case 'eagle': {
+      // Pale head and a hooked tip on the bill.
+      const cap = paint(bodyGeo(hs * 0.7, hs * 0.55, hs * 0.6, 14), [0.96, 0.95, 0.92], 0.02, 81);
+      cap.translate(headPivot.x + hs * 0.1, headPivot.y + hs * 0.15, 0);
+      add(cap, [0.96, 0.95, 0.92]);
+      const hook = paint(new THREE.ConeGeometry(hs * 0.12, hs * 0.35, 8), m.accent, 0.03, 83);
+      hook.rotateZ(-Math.PI / 2 + 0.6);
+      hook.translate(headPivot.x + hs * 1.15, headPivot.y - hs * 0.22, 0);
+      add(hook, m.accent);
+      break;
+    }
+    case 'owl': {
+      // Facial disc and ear tufts.
+      const disc = paint(bodyGeo(hs * 0.2, hs * 0.85, hs * 0.85, 14), m.accent, 0.03, 85);
+      disc.translate(headPivot.x + hs * 0.5, headPivot.y, 0);
+      add(disc, m.accent);
+      for (const side of [-1, 1]) {
+        const tuft = paint(new THREE.ConeGeometry(hs * 0.16, hs * 0.7, 8), m.fur, 0.04, 87);
+        tuft.translate(headPivot.x - hs * 0.1, headPivot.y + hs * 0.75, side * hs * 0.35);
+        add(tuft, m.fur);
+      }
+      break;
+    }
+    case 'raven': {
+      // Heavy bill and throat bristles.
+      const bill = paint(new THREE.ConeGeometry(hs * 0.3, hs * 1.1, 10), m.accent, 0.02, 89);
+      bill.rotateZ(-Math.PI / 2);
+      bill.translate(headPivot.x + hs * 1.0, headPivot.y - hs * 0.05, 0);
+      add(bill, m.accent);
+      const bristle = paint(bodyGeo(hs * 0.3, hs * 0.35, hs * 0.4, 8), m.fur, 0.03, 91);
+      bristle.translate(headPivot.x + hs * 0.55, headPivot.y - hs * 0.45, 0);
+      add(bristle, m.fur);
+      break;
+    }
+    case 'heron': {
+      // Dagger bill and two crest plumes.
+      const bill = paint(new THREE.ConeGeometry(hs * 0.1, hs * 2.2, 8), m.accent, 0.02, 93);
+      bill.rotateZ(-Math.PI / 2 + 0.05);
+      bill.translate(headPivot.x + hs * 1.2, headPivot.y - hs * 0.02, 0);
+      add(bill, m.accent);
+      for (const side of [-1, 1]) {
+        const plume = paint(new THREE.ConeGeometry(hs * 0.06, hs * 1.2, 6), m.accent, 0.03, 95);
+        plume.rotateZ(0.9);
+        plume.translate(headPivot.x - hs * 0.4, headPivot.y + hs * 0.55, side * hs * 0.1);
+        add(plume, m.accent);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+/** Fish-only features, per species. */
+function addFishSignature(key: string, pieces: Piece[], m: Morphology, bl: number, girth: number): void {
+  const origin = new THREE.Vector3();
+  const add = (geo: THREE.BufferGeometry, color: [number, number, number]) => pieces.push({ geo: tag(geo, PART.body, origin), part: PART.body, pivot: origin.clone(), color });
+  switch (key) {
+    case 'trout': {
+      // Red lateral stripe along each flank.
+      for (const side of [-1, 1]) {
+        const stripe = paint(bodyGeo(bl * 0.38, girth * 0.12, girth * 0.08, 10), [0.78, 0.22, 0.2], 0.04, 97);
+        stripe.translate(bl * 0.02, girth * 0.05, side * girth * 0.6);
+        add(stripe, [0.78, 0.22, 0.2]);
+      }
+      break;
+    }
+    case 'perch': {
+      // Spiny front dorsal: a row of short spines.
+      for (let k = 0; k < 7; k++) {
+        const spine = paint(new THREE.ConeGeometry(girth * 0.1, girth * 0.55, 5), m.accent, 0.03, 99 + k);
+        spine.translate(bl * (-0.12 + k * 0.05), girth * 0.62, 0);
+        add(spine, m.accent);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
 /** Bird: body, head+beak, tail fan, wings. */
-function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry {
+export function buildBird(m: Morphology, detail: boolean, key?: string): THREE.BufferGeometry {
   const pieces: Piece[] = [];
   const stand = m.standHeight;
   const bl = m.bodyLength;
   const girth = m.bodyGirth;
 
-  const body = paint(bodyGeo(bl * 0.5, girth * 0.85, girth, detail ? 10 : 6), m.fur, 0.07, 41);
+  const body = paint(bodyGeo(bl * 0.5, girth * 0.85, girth, detail ? 24 : 6), m.fur, 0.07, 41);
   body.translate(0, stand, 0);
   pieces.push({ geo: tag(body, PART.body, new THREE.Vector3()), part: PART.body, pivot: new THREE.Vector3(), color: m.fur });
 
-  const belly = paint(bodyGeo(bl * 0.4, girth * 0.6, girth * 0.85, 6), m.belly, 0.05, 43);
+  const belly = paint(bodyGeo(bl * 0.4, girth * 0.6, girth * 0.85, detail ? 14 : 6), m.belly, 0.05, 43);
   belly.translate(bl * 0.04, stand - girth * 0.3, 0);
   pieces.push({ geo: tag(belly, PART.body, new THREE.Vector3()), part: PART.body, pivot: new THREE.Vector3(), color: m.belly });
 
-  const headPivot = new THREE.Vector3(bl * 0.42, stand + girth * 0.35, 0);
-  const head = paint(bodyGeo(m.headSize * 0.8, m.headSize * 0.75, m.headSize * 0.75, detail ? 8 : 5), m.fur, 0.05, 47);
+  // The head sits at the far end of the neck, at the species' own neck length,
+  // so a heron's head is carried high and a finch's barely clears its back.
+  const neckBase = new THREE.Vector3(bl * 0.3, stand + girth * 0.2, 0);
+  const neckDir = new THREE.Vector3(0.35, 1, 0).normalize();
+  const neckLen = Math.max(0.03, m.neck);
+  const headPivot = new THREE.Vector3(neckBase.x + neckDir.x * neckLen, neckBase.y + neckDir.y * neckLen, 0);
+  const head = paint(bodyGeo(m.headSize * 0.8, m.headSize * 0.75, m.headSize * 0.75, detail ? 18 : 5), m.fur, 0.05, 47);
   head.translate(headPivot.x + m.headSize * 0.3, headPivot.y, 0);
   pieces.push({ geo: tag(head, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.fur });
+
+  // Neck: a tapered tube from the chest up to the head. Every bird gets one;
+  // without it a heron's head sits on its body like a bead.
+  const neckGeo = tube(neckBase, headPivot, girth * 0.42, m.headSize * 0.32, detail ? 14 : 6);
+  pieces.push({ geo: tag(paint(neckGeo, m.fur, 0.05, 49), PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.fur });
 
   // Birds get the same eyes-and-nose treatment as mammals: at close range a
   // dark eye is what makes a hawk read as watching something.
   if (detail) {
     const eyeR = Math.max(0.01, m.headSize * 0.18);
     for (const side of [-1, 1]) {
-      const eye = paint(new THREE.SphereGeometry(eyeR, 8, 6), m.eye, 0.02, 61);
+      const eye = paint(new THREE.SphereGeometry(eyeR, 14, 10), m.eye, 0.02, 61);
       eye.translate(headPivot.x + m.headSize * 0.42, headPivot.y + m.headSize * 0.12, side * m.headSize * 0.34);
       pieces.push({ geo: tag(eye, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.eye });
     }
   }
 
-  const beak = paint(new THREE.ConeGeometry(m.headSize * 0.22, m.headSize * 0.9, 5), m.accent, 0.04, 53);
+  if (detail && key) addBirdSignature(key, pieces, m, headPivot);
+
+  const beak = paint(new THREE.ConeGeometry(m.headSize * 0.22, m.headSize * 0.9, detail ? 12 : 5), m.accent, 0.04, 53);
   beak.rotateZ(-Math.PI / 2);
   beak.translate(headPivot.x + m.headSize * 1.1, headPivot.y, 0);
   pieces.push({ geo: tag(beak, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.accent });
 
   // Tail fan.
   const tailPivot = new THREE.Vector3(-bl * 0.45, stand + girth * 0.1, 0);
-  const tail = paint(new THREE.BoxGeometry(m.tailLength * 1.6, 0.03, m.tailLength * 1.5), m.fur, 0.06, 59);
+  // Tail fan: a rounded outline, laid flat behind the body.
+  const TL = m.tailLength * 1.6;
+  const TW = m.tailLength * 1.5;
+  const fan: [number, number][] = [
+    [TL * 0.5, -TW * 0.1],
+    [TL * 0.1, -TW * 0.5],
+    [-TL * 0.4, -TW * 0.55],
+    [-TL * 0.5, -TW * 0.2],
+    [-TL * 0.5, TW * 0.2],
+    [-TL * 0.4, TW * 0.55],
+    [TL * 0.1, TW * 0.5],
+  ];
+  const tail = paint(flatPanel(fan, 0.03), m.fur, 0.06, 59);
+  tail.rotateX(-Math.PI / 2);
   tail.rotateZ(0.12);
   tail.translate(tailPivot.x - m.tailLength * 0.8, tailPivot.y, 0);
   pieces.push({ geo: tag(tail, PART.tail, tailPivot), part: PART.tail, pivot: tailPivot, color: m.fur });
@@ -339,13 +927,33 @@ function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry {
   for (const side of [-1, 1]) {
     const part = side < 0 ? PART.wingL : PART.wingR;
     const pivot = new THREE.Vector3(bl * 0.05, stand + girth * 0.2, side * girth * 0.5);
-    const inner = paint(new THREE.BoxGeometry(bl * 0.5, 0.035, span * 0.55), m.accent, 0.06, part * 9);
-    inner.translate(pivot.x - bl * 0.1, pivot.y, side * (girth * 0.5 + span * 0.27));
+    const c = bl * 0.5;
+    const S1 = span * 0.55;
+    // Root section: broad at the body, narrowing toward the mid-wing.
+    const innerOutline: [number, number][] = [
+      [-c * 0.5, 0],
+      [c * 0.5, 0],
+      [c * 0.3, S1 * 0.7],
+      [-c * 0.35, S1],
+    ];
+    const inner = paint(flatPanel(innerOutline, 0.035), m.accent, 0.06, part * 9);
+    inner.rotateX(side < 0 ? -Math.PI / 2 : Math.PI / 2);
+    inner.translate(pivot.x - bl * 0.1, pivot.y, side * girth * 0.5);
     pieces.push({ geo: tag(inner, part, pivot), part, pivot, color: m.accent });
     if (detail) {
-      const outer = paint(new THREE.BoxGeometry(bl * 0.44, 0.03, span * 0.5), m.accent, 0.06, part * 11);
-      outer.rotateY(side * -0.25);
-      outer.translate(pivot.x - bl * 0.3, pivot.y, side * (girth * 0.5 + span * 0.78));
+      // Primary feathers: a narrower tip section continuing the span.
+      const c2 = bl * 0.44;
+      const S2 = span * 0.5;
+      const outerOutline: [number, number][] = [
+        [-c2 * 0.5, S1 * 0.9],
+        [c2 * 0.4, S1 * 0.9],
+        [c2 * 0.25, S1 + S2 * 0.6],
+        [-c2 * 0.1, S1 + S2],
+        [-c2 * 0.5, S1 + S2 * 0.8],
+      ];
+      const outer = paint(flatPanel(outerOutline, 0.03), m.accent, 0.06, part * 11);
+      outer.rotateX(side < 0 ? -Math.PI / 2 : Math.PI / 2);
+      outer.translate(pivot.x - bl * 0.3, pivot.y, side * girth * 0.5);
       pieces.push({ geo: tag(outer, part, pivot), part, pivot, color: m.accent });
     }
   }
@@ -356,11 +964,11 @@ function buildBird(m: Morphology, detail: boolean): THREE.BufferGeometry {
 }
 
 /** Fish: fusiform body, tail fin, dorsal fin, side fins. */
-function buildFish(m: Morphology, detail: boolean): THREE.BufferGeometry {
+export function buildFish(m: Morphology, detail: boolean, key?: string): THREE.BufferGeometry {
   const pieces: Piece[] = [];
   const bl = m.bodyLength;
   const girth = m.bodyGirth;
-  const body = paint(bodyGeo(bl * 0.5, girth * 0.6, girth * 0.7, detail ? 10 : 6), m.fur, 0.07, 61);
+  const body = paint(bodyGeo(bl * 0.5, girth * 0.6, girth * 0.7, detail ? 24 : 6), m.fur, 0.07, 61);
   pieces.push({ geo: tag(body, PART.body, new THREE.Vector3()), part: PART.body, pivot: new THREE.Vector3(), color: m.fur });
 
   const belly = paint(bodyGeo(bl * 0.35, girth * 0.4, girth * 0.6, 6), m.belly, 0.05, 67);
@@ -368,15 +976,16 @@ function buildFish(m: Morphology, detail: boolean): THREE.BufferGeometry {
   pieces.push({ geo: tag(belly, PART.body, new THREE.Vector3()), part: PART.body, pivot: new THREE.Vector3(), color: m.belly });
 
   const headPivot = new THREE.Vector3(bl * 0.35, 0, 0);
-  const head = paint(bodyGeo(m.headSize * 0.6, m.headSize * 0.5, m.headSize * 0.55, 6), m.fur, 0.05, 71);
+  const head = paint(bodyGeo(m.headSize * 0.6, m.headSize * 0.5, m.headSize * 0.55, detail ? 14 : 6), m.fur, 0.05, 71);
   head.translate(bl * 0.32, 0, 0);
   pieces.push({ geo: tag(head, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.fur });
+  if (detail && key) addFishSignature(key, pieces, m, bl, girth);
 
   // Eyes, set high on the head as they are on a trout.
   if (detail) {
     const eyeR = Math.max(0.008, m.headSize * 0.22);
     for (const side of [-1, 1]) {
-      const eye = paint(new THREE.SphereGeometry(eyeR, 6, 5), m.eye, 0.02, 79);
+      const eye = paint(new THREE.SphereGeometry(eyeR, 12, 9), m.eye, 0.02, 79);
       eye.translate(bl * 0.38, m.headSize * 0.22, side * m.headSize * 0.3);
       pieces.push({ geo: tag(eye, PART.head, headPivot), part: PART.head, pivot: headPivot, color: m.eye });
     }
@@ -384,20 +993,52 @@ function buildFish(m: Morphology, detail: boolean): THREE.BufferGeometry {
 
   // Tail fin.
   const tailPivot = new THREE.Vector3(-bl * 0.42, 0, 0);
-  const tail = paint(new THREE.BoxGeometry(bl * 0.2, girth * 1.5, 0.02), m.accent, 0.06, 73);
+  // Forked caudal fin: a crescent outline, its base on the body's rear end.
+  const H = girth * 0.8;
+  const L = bl * 0.2;
+  const tailOutline: [number, number][] = [
+    [0, -0.25 * H],
+    [-0.5 * L, -H],
+    [-L, -0.85 * H],
+    [-0.8 * L, 0],
+    [-L, 0.85 * H],
+    [-0.5 * L, H],
+    [0, 0.25 * H],
+    [-0.25 * L, 0],
+  ];
+  const tail = paint(flatPanel(tailOutline, 0.02), m.accent, 0.06, 73);
   tail.translate(-bl * 0.5, 0, 0);
   pieces.push({ geo: tag(tail, PART.tail, tailPivot), part: PART.tail, pivot: tailPivot, color: m.accent });
 
   if (m.finStyle !== 'none') {
     const finPivot = new THREE.Vector3(0, girth * 0.5, 0);
-    const fin = paint(new THREE.BoxGeometry(bl * 0.28, girth * 0.9, 0.02), m.accent, 0.06, 79);
-    fin.rotateZ(-0.3);
-    fin.translate(bl * 0.05, girth * 0.55, 0);
+    const B = bl * 0.28;
+    const D = girth * 0.9;
+    const dorsal: [number, number][] = [
+      [0, 0],
+      [B, 0],
+      [B * 0.65, D * 0.45],
+      [B * 0.3, D],
+      [0, D * 0.4],
+    ];
+    const fin = paint(flatPanel(dorsal, 0.02), m.accent, 0.06, 79);
+    fin.translate(-B * 0.4, girth * 0.45, 0);
     pieces.push({ geo: tag(fin, PART.fin, finPivot), part: PART.fin, pivot: finPivot, color: m.accent });
   }
   if (detail) {
     for (const side of [-1, 1]) {
-      const fin = paint(new THREE.BoxGeometry(bl * 0.16, 0.02, girth * 0.6), m.accent, 0.05, side * 83 + 90);
+      const L2 = bl * 0.16;
+      const W2 = girth * 0.6;
+      const paddle: [number, number][] = [
+        [0, 0],
+        [L2 * 0.55, W2 * 0.5],
+        [L2, W2 * 0.2],
+        [L2 * 0.9, 0],
+        [L2, -W2 * 0.2],
+        [L2 * 0.55, -W2 * 0.5],
+      ];
+      const fin = paint(flatPanel(paddle, 0.02), m.accent, 0.05, side * 83 + 90);
+      fin.rotateX(side < 0 ? -Math.PI / 2 : Math.PI / 2);
       fin.rotateY(side * 0.4);
       fin.translate(bl * 0.12, -girth * 0.1, side * girth * 0.5);
       pieces.push({ geo: tag(fin, PART.fin, new THREE.Vector3(0, 0, 0)), part: PART.fin, pivot: new THREE.Vector3(), color: m.accent });
@@ -682,14 +1323,52 @@ export class CreatureRenderer {
   private farCap: number;
   private scratch: THREE.Vector3[] = [];
   private lastPhaseRefresh = 0;
+  private skinned: SkinnedAnimals;
+  private lastNow = 0;
+  private skinnedSkip = new Set<number>();
 
   constructor(private world: World, quality: 'low' | 'medium' | 'high' | 'ultra') {
     const detailScale = quality === 'low' ? 0.35 : quality === 'medium' ? 0.6 : 1;
+    // Skinned animals per species: the nearest ones within creatureAnimDistance.
+    const skinnedCap = quality === 'low' ? 6 : quality === 'medium' ? 16 : quality === 'high' ? 30 : 40;
+    this.skinned = new SkinnedAnimals(this.group, skinnedCap);
+    this.skinned.load();
+    // Hand-built species get a procedural rig from their own mesh, so their
+    // close-ups are animated like the fox.
+    for (const key of ['rabbit', 'deer', 'wolf', 'lynx', 'bison', 'goat', 'bear'] as const) {
+      const sp = SPECIES.find((x) => x.key === key);
+      if (!sp) continue;
+      // Hand-built fallback, used if both GLB sources fail to load.
+      const fallback = () => {
+        const build = key === 'rabbit' ? buildRabbit : key === 'deer' ? buildDeer : key === 'wolf' ? buildWolf : key === 'lynx' ? buildLynx : (mm: Morphology, d: boolean) => buildQuadruped(mm, d, key);
+        const rig = buildRiggedAnimal(build(sp.morphology, true), sp.morphology.standHeight, key === 'rabbit');
+        this.skinned.addRigged(key, rig.scene, rig.animations);
+      };
+      // Generated smooth mesh (tools/animal_models) next.
+      const generated = () => loadGeneratedRig(key).then((rig) => this.skinned.addRigged(key, rig.scene, rig.animations), (err) => {
+        console.warn(`[rig] generated ${key} failed, using hand-built`, err);
+        fallback();
+      });
+      // Real CC0 model by Quaternius first (public/assets/models/quaternius).
+      const q = QUATERNIUS[key];
+      if (q) {
+        new GLTFLoader().loadAsync(q.url).then((gltf) => {
+          if (key === 'rabbit') addDeathClip(gltf.animations, 'Body');
+          this.skinned.addRigged(key, gltf.scene, gltf.animations, q.clips);
+        }, (err) => {
+          console.warn(`[rig] Quaternius ${key} failed, using generated`, err);
+          generated();
+        });
+      } else {
+        generated();
+      }
+    }
     this.nearCap = Math.max(24, Math.round(70 * detailScale));
     this.farCap = Math.max(120, Math.round(320 * detailScale));
     for (let i = 0; i < SPECIES.length; i++) {
       const m = SPECIES[i].morphology;
-      const build = SPECIES[i].locomotion === 'bird' ? buildBird : SPECIES[i].locomotion === 'fish' ? buildFish : buildQuadruped;
+      const key = SPECIES[i].key;
+      const build = (mm: Morphology, d: boolean) => (SPECIES[i].locomotion === 'bird' ? buildBird(mm, d, key) : SPECIES[i].locomotion === 'fish' ? buildFish(mm, d, key) : buildQuadruped(mm, d, key));
       const near = build(m, true);
       const far = quality === 'low' ? near : build(m, false);
       const mesh = new SpeciesMesh(i, near, far, this.nearCap, this.farCap);
@@ -710,8 +1389,38 @@ export class CreatureRenderer {
     }
     for (const m of this.meshes) m.begin();
 
+    // Rigged species: the nearest few are drawn as skinned models and left out
+    // of the instanced pass. Everything else takes the instanced path below.
+    const dt = this.lastNow ? Math.min(0.1, (now - this.lastNow) / 1000) : 0;
+    this.lastNow = now;
+    this.skinned.beginFrame();
+    const alpha = world.frameAlpha;
+    for (const key of this.skinned.species()) {
+      if (!this.skinned.isReady(key)) continue;
+      const spIdx = SPECIES.findIndex((sp) => sp.key === key);
+      if (spIdx < 0) continue;
+      const dist = (i: number) => Math.hypot(c.x[i] - cameraPos.x, c.y[i] - cameraPos.z);
+      const picks: number[] = [];
+      for (let i = 0; i < c.capacity; i++) {
+        if (!c.alive[i] || c.speciesIdx[i] !== spIdx) continue;
+        if (dist(i) < RENDER.creatureAnimDistance) picks.push(i);
+      }
+      picks.sort((a, b) => dist(a) - dist(b));
+      this.skinned.place(
+        key,
+        picks.slice(0, this.skinned.capacity()),
+        c,
+        SPECIES[spIdx].morphology.bodyLength,
+        (i) => lerpAngle(c.prevHeading[i], c.heading[i], alpha),
+        (i) => new THREE.Vector3(lerp(c.prevX[i], c.x[i], alpha), c.z[i], lerp(c.prevY[i], c.y[i], alpha)),
+      );
+      for (const i of this.skinned.consumed()) this.skinnedSkip.add(i);
+    }
+    this.skinned.update(dt);
+
     for (let i = 0; i < c.capacity; i++) {
       if (!c.alive[i]) continue;
+      if (this.skinnedSkip.has(i)) continue;
       const spIdx = c.speciesIdx[i];
       const sp = SPECIES[spIdx];
       const mesh = this.meshes[spIdx];
@@ -735,8 +1444,9 @@ export class CreatureRenderer {
 
     for (const m of this.meshes) {
       m.end();
-      m.updateUniforms(world.clock.minutes * 0.02, snowCover, night);
+      m.updateUniforms(world.smoothMinutes * 0.02, snowCover, night);
     }
+    this.skinnedSkip.clear();
   }
 
   countInstances(): { near: number; far: number } {
@@ -750,6 +1460,7 @@ export class CreatureRenderer {
   }
 
   dispose(): void {
+    this.skinned.dispose();
     for (const m of this.meshes) m.dispose();
   }
 }
