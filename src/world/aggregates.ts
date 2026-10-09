@@ -118,7 +118,7 @@ export class Aggregates {
 
   private rng: Random;
   private slice = 0;
-  private slices = 4;
+  private slices = 8;
 
   constructor(terrain: Terrain, climate: Climate, vegetation: Vegetation, seed: string) {
     this.terrain = terrain;
@@ -239,7 +239,11 @@ export class Aggregates {
    * simulated hour by the world.
    */
   update(dtMinutes: number): void {
-    const hours = dtMinutes / 60;
+    // Each call covers one band of 1/slices of the grid, so each cell is visited
+    // once per `slices` calls. Scaling the time step by `slices` keeps every
+    // cell's growth and decline the same per sweep, while each call does half
+    // the work it did at 4 slices.
+    const hours = (dtMinutes / 60) * this.slices;
     const t = this.terrain;
     const n = this.size;
     const bandStart = Math.floor((this.slice * n) / this.slices);

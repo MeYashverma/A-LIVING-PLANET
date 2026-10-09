@@ -48,6 +48,8 @@ export interface SimStats {
  */
 /** Real milliseconds per frame the simulation may use. The rest goes to rendering. */
 const FRAME_SIM_BUDGET_MS = 5;
+/** Open the app with ?passlog to print per-pass maxima every 25 timed passes. */
+const PASS_LOG = typeof location !== 'undefined' && location.search.includes('passlog');
 
 export class World {
   readonly seed: string;
@@ -88,7 +90,12 @@ export class World {
   errors: string[] = [];
   private lastDay = 1;
   private accumulator = 0;
-  private cadence: Record<string, number> = {};
+  /**
+   * Time since each cadence pass last ran, in sim minutes. Soil, vegetation and
+   * aggregates all run every 6 minutes; starting them at different offsets puts
+   * them on different steps, so their costs no longer stack into one frame.
+   */
+  private cadence: Record<string, number> = { soil: 5, veg: 4, agg: 2 };
   private notifyCooldown = new Map<string, number>();
   private lastSimMs = 0;
 
@@ -418,6 +425,8 @@ export class World {
       this.runCreatures(Infinity);
       this.finishStep();
     }
+    // Fast-forward runs whole steps back to back: finish the water update first.
+    while (this.hydrology.busy) this.hydrology.pump();
     this.startStep(dt);
     this.runCreatures(Infinity);
     this.finishStep();
@@ -431,12 +440,13 @@ export class World {
       this.climate.update(dt);
       // The heavier field simulators run at their own cadence. Plants and soil
       // do not need two-minute resolution; water does, because it flows.
-      if (this.due('hydro', dt, 3)) this.hydrology.update(3);
-      if (this.due('soil', dt, 6)) this.soil.update(6);
-      if (this.due('veg', dt, 6)) this.vegetation.update(6);
-      if (this.due('forest', dt, 18)) this.forest.update(18);
-      this.fire.update(dt, this.terrain.soilMoisture.data);
-      if (this.due('agg', dt, 6)) this.aggregates.update(6);
+      if (this.due('hydro', dt, 3)) this.hydrology.begin(3);
+      this.timed('hydro', () => this.hydrology.pump());
+      if (this.due('soil', dt, 6)) this.timed('soil', () => this.soil.update(6));
+      if (this.due('veg', dt, 6)) this.timed('veg', () => this.vegetation.update(6));
+      if (this.due('forest', dt, 18)) this.timed('forest', () => this.forest.update(18));
+      this.timed('fire', () => this.fire.update(dt, this.terrain.soilMoisture.data));
+      if (this.due('agg', dt, 6)) this.timed('agg', () => this.aggregates.update(6));
       this.updateCreatureGrid();
       this.stepJob = { dt, cursor: 0 };
     } catch (err) {
@@ -454,11 +464,14 @@ export class World {
     const job = this.stepJob;
     if (!job) return true;
     const c = this.creatures;
+    // Water work is sliced over the animal loop, so it advances even with no animals.
+    this.timed('hydro', () => this.hydrology.pump());
     try {
       let n = 0;
       for (; job.cursor < c.capacity; job.cursor++) {
         if (c.alive[job.cursor]) simulateCreature(this, job.cursor, job.dt);
-        if ((++n & 31) === 0 && performance.now() > deadlineMs) {
+        if ((++n & 31) === 0) this.timed('hydro', () => this.hydrology.pump());
+        if ((n & 31) === 0 && performance.now() > deadlineMs) {
           job.cursor++;
           return false;
         }
@@ -482,8 +495,8 @@ export class World {
 
       // Thirty minutes of real simulation time, expressed in days: the SIR step
       // must match the clock, or an epidemic burns through a generation a minute.
-      if (this.due('disease', dt, 30)) this.disease.update(c, 30 / TIME.minutesPerDay, this.clock.day);
-      if (this.due('social', dt, 15)) this.social.update(this, 15);
+      if (this.due('disease', dt, 30)) this.timed('disease', () => this.disease.update(c, 30 / TIME.minutesPerDay, this.clock.day));
+      if (this.due('social', dt, 15)) this.timed('social', () => this.social.update(this, 15));
       if (this.due('carcass', dt, 20)) {
         const leach = this.carcasses.update(20 / TIME.minutesPerDay, this.climate);
         for (const l of leach) {
@@ -493,8 +506,8 @@ export class World {
         }
       }
       if (this.due('canopy', dt, 30)) this.forest.refreshCanopy();
-      if (this.due('census', dt, 60)) this.census.update(this, true);
-      if (this.due('events', dt, 60)) this.detectNotableEvents();
+      if (this.due('census', dt, 60)) this.timed('census', () => this.census.update(this, true));
+      if (this.due('events', dt, 60)) this.timed('events', () => this.detectNotableEvents());
       if (this.due('fire-spont', dt, 90)) this.fire.spontaneous(90);
       if (this.due('day', dt, 1)) this.onMinuteTick();
 
@@ -522,6 +535,26 @@ export class World {
     c.grid.clear();
     for (let i = 0; i < c.capacity; i++) {
       if (c.alive[i]) c.grid.insert(i, c.x[i], c.y[i]);
+    }
+  }
+
+  /**
+   * Time one pass. Max and average are kept so a frame hitch can be traced to
+   * the pass that caused it. Open the app with ?passlog to read them.
+   */
+  private passStats: Record<string, { max: number; sum: number; n: number }> = {};
+  private timed(name: string, fn: () => void): void {
+    const t = performance.now();
+    fn();
+    const ms = performance.now() - t;
+    const st = (this.passStats[name] ??= { max: 0, sum: 0, n: 0 });
+    st.max = Math.max(st.max, ms);
+    st.sum += ms;
+    st.n++;
+    if (PASS_LOG) {
+      (globalThis as unknown as { __passMs?: unknown }).__passMs = Object.fromEntries(
+        Object.entries(this.passStats).map(([k, v]) => [k, { max: +v.max.toFixed(1), avg: +(v.sum / v.n).toFixed(2), n: v.n }]),
+      );
     }
   }
 
